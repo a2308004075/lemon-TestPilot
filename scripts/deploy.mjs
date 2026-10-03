@@ -3,6 +3,7 @@ import { createServer } from 'node:net';
 import { mkdirSync, createWriteStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { createDb } from '../db.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 process.chdir(root);
@@ -24,7 +25,9 @@ function run(command, args, options = {}) {
 try {
   if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('请安装 Node.js 24 LTS 或更高版本，然后重新启动。');
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT 必须是 1–65535 的整数。');
-  await import('node:sqlite');
+  say('正在检查 MySQL 连接…');
+  const db = await createDb();
+  await db.end();
   await new Promise((resolve, reject) => {
     const probe = createServer();
     probe.once('error', error => reject(new Error(`端口 ${port} 无法使用：${error.code}。请关闭已有服务或设置其他 PORT。`)));
