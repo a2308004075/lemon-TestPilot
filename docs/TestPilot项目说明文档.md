@@ -225,7 +225,7 @@ npm run build    # 生产构建
 
 ![04-AI测试助手-执行结果](./手册截图/04-AI测试助手-执行结果.png)
 
-**后续去向**：每次执行写入执行记录；复核通过后，可在执行结果卡片将事实类路由（Bug 分析 / 日志排查 / SQL 分析 / 回归清单）的输出**沉淀为知识**（生成待审核知识，需在知识库中审核发布，来源追溯 `runId#路由ID`）；Bug/日志/SQL 分析任务审核通过后也可在任务详情**申请入知识库**。用例生成路由的「存入用例库」与知识沉淀扩展方案见 6.5；测试报告路由的「存入测试报告」出口方案见 6.10.7。
+**后续去向**：每次执行写入执行记录；复核通过后，可在执行结果卡片将事实类路由（Bug 分析 / 日志排查 / SQL 分析 / 回归清单）的输出**沉淀为知识**（生成待审核知识，需在知识库中审核发布，来源追溯 `runId#路由ID`）；Bug/日志/SQL 分析任务审核通过后也可在任务详情**申请入知识库**。用例生成路由的「存入用例库」与知识沉淀扩展方案见 6.5；测试报告路由的「存入测试报告」出口方案见 6.10.7；助手整体的执行域增强方案（取消 / 重试 / 重跑、命中依据与置信度、最近执行面板、Token 用量等）见 6.17。
 
 ### 4.3 执行记录
 
@@ -1911,6 +1911,208 @@ G2~G5 均不涉及 AI 与数字红线（纯前端口径与交互问题），建�
 
 > 出处：本文档新增方案与实施记录（2026-10-04），基于当次会话对 `workbench-api.mjs`（`ENTRY_DEFS` / `OUTPUT_SCHEMAS` / `POST /runs` / DDL / seed）、`src/workbench.tsx`（`AssistantPage` / `RunResult` / `routeIcon`）的逐行核对；D-A 真运行、D-B 建表资产化、D-C 五种判定规则、D-D 写入文档四项决策经使用者确认；状态：已实施（代码与静态校验完成；API 冒烟经使用者确认豁免，4.2 回写已完成）。
 
+### 6.17 AI 测试助手整体功能解析与执行域增强方案（现状解析归档；方案未实施）
+
+「AI 测试助手」是把"一段材料"变成"一组按顺序执行的分析任务"的统一执行入口（对应工作台主线：发起任务 → 自动识别与路由 → 按流程执行 → 人工复核 → 沉淀知识 → 生成报告），也是全站使用频率最高的页面。7 个标准入口中，各路由的功能解析已分别归档于 6.5（用例生成）/ 6.6（Bug 分析）/ 6.7（日志排查）/ 6.8（SQL 分析）/ 6.9（回归清单）/ 6.10（测试报告）/ 6.16（Prompt 测试），执行记录域见 6.4；本节为**助手整体**的解析归档（作用与使用方式 / 实现链路 / AI 用法分工），并为此前文档无方案的五组执行域缺口（A 执行控制 / B 命中依据与置信度 / C 最近执行面板 / D 步骤类型与版本绑定 / E 成本可观测性）输出详细设计。共用链路改造（流式输出 / 附件参与检索 / 大日志分片见 6.7.5 C3/C5/C6；独立页知识注入见 6.6.4~6.6.8；编排真源缺陷见 6.14.5）不在本节重复。
+
+#### 6.17.1 功能定位与用户使用方式
+
+**定位**：AI 测试助手是"有入口路由、有固定步骤、有业务知识、有机器校验、有人工门禁的测试调度器"（6.1）。一句话——AI 负责分析，规则负责约束 AI，人负责终审。它一次解决四个问题：① 一段材料涉及几类测试任务（自动识别主任务 + 辅助任务）；② 每类任务按什么流程做（固定工作流步骤、串行执行、禁止跳步）；③ 结论有什么依据（只引用已发布知识，未命中显式声明、禁止虚构）；④ 结论是否可信（Schema 机器校验 + 风险单向取高 + 复核门禁，未复核 = "AI 草稿"）。
+
+**使用流程**（`AssistantPage`，`src/workbench.tsx`）：
+
+1. **前置条件**：到「配置中心 → 大模型」启用一个对话模型（用途 `chat`）并配置 API Key；否则「按流程执行」按钮禁用、右侧显示"未配置可用的对话模型"警告（`chatProviders` 过滤，L16/L27）。
+2. **发起任务**：可选 7 个任务入口（不勾选交给系统自动识别，勾选则指定执行）；选择项目 / 模块 / 子模块与分析模型（自动或指定）；粘贴整段材料（支持「载入支付异常示例」「载入 Prompt 测试示例」）；可上传文本附件（白名单 `.txt/.log/.sql/.md/.json/.csv`、单文件 ≤200KB、"附件参与分析"开关默认开、每文件前 8KB 送入模型）；勾选 Prompt 测试时出现测试集选择栏（可选用 / 新建 / 编辑，≤10 样例）。
+3. **识别与预检**（`POST /api/workbench/preflight`）：右侧面板显示命中路由清单（主/辅助任务角色、信息完整度百分比）与缺少的必要信息；缺项时不猜测根因，可生成"待补充"记录。
+4. **按流程执行**（`POST /api/workbench/runs`）：按默认顺序串行执行全部命中路由，生成执行结果卡片——执行 ID、风险/状态徽标、模型名、路由页签、每路由结构化 JSON（含"加载知识（semantic/keyword）：标题（v版本）"或"未检索到相关知识（未虚构）"；结构校验未通过 / 本地兜底显示黄色徽标）、Prompt 测试逐样例真运行对照表（六列 + 通过率）。
+5. **人工复核**：逐项勾选复核清单 + 可选备注（≤200 字）→「确认通过」（P0 二次确认）或「驳回补充」（回到"待补充"）；必选复核（P0/P1 / prompt_test）未勾完时服务端 400 拒绝。
+6. **后续去向**：复核通过（`已完成`）后，事实类路由（Bug/日志/SQL/回归）可「沉淀为知识」（生成**待审核**知识，来源 `runId#路由ID`，人工发布后才进入后续检索）；「导出 Markdown」存档；每次执行自动写入执行记录页（可搜索 / 筛选 / 回看详情）。
+
+#### 6.17.2 代码是怎么实现此功能的（请求链路）
+
+```text
+用户点击「按流程执行」
+ → src/workbench.tsx execute()      POST /api/workbench/runs {text, moduleId, selectedRoutes, providerId, suiteId, attachments[{name,size,content,include}]}
+ → server.mjs L80                    createWorkbench(db,{readProviderKey, retrieve, recordHits}) 依赖注入（L78-80，知识检索独立于 knowledge-retrieval.mjs）
+ → workbench-api.mjs POST /runs（L131-165）
+     ├─ 选模型（L132-134）：指定 providerId 校验 enabled+chat；否则自动取第一个已配 Key 的 chat 模型；无模型 / 无 Key → 400 阻断（不回退本地模板）
+     ├─ 路由识别（L135）：routeText() 触发词匹配（L26）→ 命中多入口按 DEFAULT_ORDER 排序，首位=主任务；无命中默认 bug_analysis
+     ├─ 缺项检查（L135）：fieldPresent() 正则规则表（L19-25）逐字段判定
+     ├─ 风险初判（L135）：正则（生产/资损/重复扣款/数据丢失/安全→P0；失败/异常/超时/锁等待→P1；其余 P2）
+     ├─ 附件拼接（L137）：include≠false 的附件按 "--- 附件：{name} ---" + 前 8KB 拼入 user 消息
+     ├─ 串行执行循环（L140-152）：每路由 retrieve(text, entry.knowledge) → systemPrompt 组装（L37-41）→ callModel（L48-53）→ validateOutput（L36）；
+     │    180 秒总预算（L141）；prompt_test 走真运行分支（L145-149：测试集或材料解析 → 逐样例 callModelRaw + 规则判定 + 评审总结）
+     ├─ 全部失败（L153）：502 阻断、不落库
+     ├─ 风险单向取高（L154-155）：RANK P0>P1>P2，模型 risk_level 只能升不能降
+     ├─ 组装 result（L156-159）：model / sections（含 _schema_check、degraded）/ routeSummary（loadedKnowledge 条目级快照 + retrievalMethod）
+     └─ 三表落库（L162-164）：workflow_runs + retrieval_hits（软引用）+ workflow_run_steps（含 Prompt 测试逐样例步骤）→ 返回 getRun(runId)
+ → 前端 RunResult 渲染；复核走 PATCH /runs/:id（L168，服务端强校验勾选）
+```
+
+知识检索（`knowledge-retrieval.mjs` L59-77）：semantic（embedding 模型向量化 + 应用层余弦 ≥0.3，Top5）→ keyword（中文 2~3 字 n-gram 滑窗 + 英文 token，标题命中 ×3 / 正文 ×1，Top5）→ none（显式声明"未检索到"）；`knowledge_embeddings` 按 `updated_at` 判过期、批量 16 条懒补齐（L37-49）；命中写入 `retrieval_hits` 软引用（L78-80，不写 `relations`、不阻塞知识撤销，R7）。
+
+数据表：`workbench_assets`（7 入口配置真源）、`workflow_runs`（原始输入 / 结果 / 缺项 / 复核 / 证据快照）、`workflow_run_steps`（逐步轨迹）、`retrieval_hits`、`knowledge_embeddings`、`prompt_test_suites`、`validation_cases`。
+
+#### 6.17.3 项目是如何用 AI 的（规则与模型分工）
+
+| 环节 | 规则（代码） | AI（模型） |
+| --- | --- | --- |
+| 路由识别（哪个任务） | **触发词关键词匹配**（`routeText`），AI 不参与 | — |
+| 缺项检查 | 正则规则表（`fieldPresent`） | — |
+| 知识检索 | 关键词降级兜底（keyword 命中标题 ×3 / 正文 ×1） | **embedding 模型**做语义向量检索（可降级，不伪造） |
+| 分析本体 | — | **chat 模型**：systemPrompt 注入"角色 + 模块 + 工作流 + 已发布知识事实 + 安全规则 + 输出 Schema"，userText 为材料 + 附件前 8KB |
+| 风险判定 | 正则初判（P0/P1/P2） | 模型返回 `risk_level`，与初判**单向取高**（只能升不能降） |
+| 输出校验 | `validateOutput` 字段级 Schema 校验 | — |
+| Prompt 测试 | **5 种规则机器判定**（verdict 由规则产生、不可被模型更改） | chat 模型逐样例**真运行**被测 Prompt + 一次评审总结（checks/decision） |
+| 终审与沉淀 | 服务端复核门禁（未勾完 400） | 人工触发沉淀，AI 产物仅"待审核"（R2：AI 不发布） |
+
+即：AI 只出现在"检索"与"分析 / 真运行"两个环节，其余全部由规则与人工管控——这正是 1.3 节"AI 使用边界"的落地方式。
+
+#### 6.17.4 未实现部分盘点（三分类，2026-10-04 逐行核对）
+
+**第一类：未实现但文档已有方案（不自本节重复设计）**
+
+| 缺口 | 方案 |
+| --- | --- |
+| 无流式输出 / 中间进度（串行 + 同步一次性响应） | 6.7.5 批次 5（C5，SSE 可选默认关） |
+| 附件内容不参与知识检索（`retrieve` 仅用主文本） | 6.7.5 批次 3（C3，附件前 2000 字入检索） |
+| 大日志附件 8KB 截断丢内容 | 6.7.5 批次 6（C6 分片） |
+| 用例生成无逐条结构化用例与「存入用例库」出口 | 6.5 + 6.5.8 |
+| 回归清单「存入回归清单」出口（后端无 POST 端点） | 6.9 |
+| 测试报告「存入测试报告」出口 | 6.10.7 |
+| M5 AI 起草知识（查重 / 起草） | 6.12 |
+| 编排真源缺陷（触发词 / 必填字段修改不被运行消费） | 6.14.5 |
+| 案例验证增强（自建案例 / 历史 / run-all） | 6.13 |
+| 独立页（Bug/日志/SQL 分析页）知识注入与专属 Schema | 6.6.4~6.6.8（M2）+ 6.7.5 C1 |
+
+**第二类：已定案的取舍（不算缺口）**：执行记录删除不做（6.4.7）；"执行中"状态与轮询不引入（6.4.2，C5 仅响应方式可选）；无真实日志源对接（6.7.6 产品定位）；无并发队列（单机单人）。
+
+**第三类：未实现且文档无方案（本节 A~E 补齐）**
+
+| # | 缺口 | 需求依据 | 源码证据 |
+| --- | --- | --- | --- |
+| A | 执行控制三件套：无取消 / 中断执行；模型瞬时失败无重试（直接进 degraded）；无重跑（驳回 / 待补充后只能回助手页重新粘贴执行） | 2.4 第 5 条"独立保存、**重试**、审核和追溯"仅"重试"未落地 | `execute()` 仅 busy 动画无 AbortController；L143-152 失败即 degraded；全仓无 rerun 端点 |
+| B | 无命中依据与置信度展示：预检面板只有路由名 + 完整度，不显示哪个触发词命中、无置信度 | FR-02"必须展示命中原因"、2.4 第 1 条"展示命中入口、命中依据与置信度" | `routeText` 只返回 id 数组（L26）；`preflight` 响应无 matchedTriggers / confidence |
+| C | 助手页无"最近执行与待复核"展示（最近执行只在执行记录页） | FR-01"最近执行与待复核展示" | `AssistantPage` 渲染树无任何 run 列表区块 |
+| D | 工作流步骤无类型（必选 / 可选 / 条件 / 人工节点），run 不记资产版本号，复核项硬编码四项 | FR-05"有序步骤（必选/可选/条件/人工节点）、版本绑定任务快照" | `workflow_json` 为纯字符串数组；L160 `baseChecks` 硬编码；L156 `routeSummary` 无 version 字段 |
+| E | 执行成本不可观测：同一 run 多路由对同一文本重复调 embedding（N 路由 = N 次 query 向量化）；模型返回的 `usage`（token 用量）被直接丢弃 | 可观测性 | `retrieve` 每路由独立 `embed([text])`（L62）；`callModelRaw` 只取 content（L46） |
+
+建议记取舍（本次不出方案，理由见 6.17.6）：FR-06 Prompt 资产化 + Token 预估；多轮对话式追问；FR-08 References 方法库独立资产。
+
+#### 6.17.5 无方案缺口的补齐方案详细设计（2026-10-04 经使用者确认，未实施）
+
+**已确认决策**
+
+| 编号 | 决策点 | 结论 |
+| --- | --- | --- |
+| D-17-1 | 方案范围 | A~E 五组全量细化（使用者已确认） |
+| D-17-2 | A1 取消语义 | 取消即丢弃不落库（使用者已确认） |
+| D-17-3 | A3 重跑范围 | 整单重跑 + 单路由重跑（使用者已确认） |
+
+**方案 A：执行控制三件套（取消 / 重试 / 重跑）**
+
+A1 取消 / 中断（`src/workbench.tsx` + `workbench-api.mjs`）：
+
+1. **前端**（`AssistantPage.execute()`）：新建 `AbortController`（ref 持有），`fetch` 传 `signal`；busy 态主按钮渲染为「取消执行」，点击 `ctrl.abort()` 并 `notify('已取消本次执行')`；`catch` 中区分 `AbortError`（静默复位，不弹错误）与其他错误。
+2. **后端**（POST /runs L131 入口）：`let aborted=false; req.on('close',()=>{aborted=true})`（Node http：客户端断开触发 `close`）；串行循环（L140）每路由开始前 `if(aborted)break`（不再发起剩余路由模型调用）；循环后 `if(aborted)return`（已执行路由结果丢弃，**不落库、不写响应**——连接已断）。
+3. **与 6.7.5 C5 协同**：SSE 实施后前端 `reader.cancel()` 触发同一连接断开判定，后端零改动；`stream=true` 路径循环后同样 `if(aborted)return`（不发 done / error 事件）。
+4. **验收**：执行中点击「取消执行」→ 前端提示已取消、busy 复位；后端不再发起剩余路由模型调用；`workflow_runs` / `retrieval_hits` / `workflow_run_steps` 零新增。
+
+A2 瞬时失败重试（`workbench-api.mjs`）：
+
+5. **新函数 `retryCall(fn)`**：执行 `fn`，失败后按错误分类——**可重试**：HTTP 429/5xx、网络类错误（`fetch failed` / `timeout` / ECONN）、JSON 解析失败（偶发截断）；**不可重试**：HTTP 400/401/403（参数 / 鉴权类）。可重试时固定间隔 800ms 后重试 **1 次**；仍失败则抛出。
+6. **应用点（3 处）**：L150 各路由 `callModel`；L97 评审总结 `callModel`；L82 逐样例 `callModelRaw`（Prompt 测试逐样例最易受瞬时抖动影响）。
+7. **预算与标注**：重试等待 + 重发耗时计入该路由耗时与 180 秒总预算（L141 检查不变）；重试后仍失败才进 degraded，`degradedReason` 与步骤 note 标注「（已重试 1 次）」。
+8. **零 DDL、零前端改动**（degraded 展示已存在）。
+
+A3 重跑（整单 + 单路由，`workbench-api.mjs` + `src/workbench.tsx`）：
+
+9. **执行核心抽取**：POST /runs 处理器主体（L131-165：选模型 → 路由 → 循环 → 风险 → 组装 → 落库）抽为内部函数 `executeCore(d)`（入参同请求体 + 可选 `{rerunOf}`），原端点与重跑端点共用——单一实现防漂移（同 6.13 `runCase` 思路）。
+10. **新端点 `POST /api/workbench/runs/:id/rerun`**（判定置于现有 `GET/PATCH /runs/:id` 分支之前，`parts[4]==='rerun'`）：读原 run 行（`input_json` → text / attachments、`module_id`、`routes_json`）；请求体可选 `{providerId, routeIds}`：
+    - 缺省（整单重跑）：执行路由取原 `routes_json` 全量；
+    - `routeIds` 传入（单路由重跑）：执行路由直接取 `routeIds` 与原路由顺序的交集子集（**绕过 routeText 触发词**，不复跑无关路由）；
+    - 模型选择走 `executeCore` 既有逻辑（自动或请求体指定）；生成**新 runId**；`evidence_json` 首条插入「重跑自 {原runId}」；其余落库逻辑不变。
+11. **前端**（`RunResult`）：
+    - 结果卡片头部新增「重新执行」按钮（任意状态可用）→ `POST /runs/{run.id}/rerun` → `onChange(新 run)`（卡片切换为新记录）+ notify；
+    - 每路由输出块头部新增「重跑此路由」按钮 → `POST /runs/{run.id}/rerun {routeIds:[r.id]}` → 新 run 仅含该路由；
+    - 执行记录详情抽屉复用 `RunResult`，自动获得两个入口；请求期间按钮 loading（局部 state）。
+12. **语义边界**：重跑不修改原记录（R5 快照不可篡改）；待补充 / 已驳回记录的"补齐后重新执行"主路径为回助手页改材料后发起全新执行（重跑不支持改材料）；重跑 run 标题沿用原输入派生规则（同标题，靠 evidence「重跑自」与时间区分）。
+13. **验收**：整单重跑 → 新 run 全路由执行、evidence 含「重跑自」、原 run 字段不变；单路由重跑 → 新 run 仅含指定路由且顺序与原本一致；重跑失败语义与原执行一致（单路由兜底 / 全部失败 502 不落库）。
+
+**方案 B：路由命中依据与置信度展示（FR-02 / 2.4）**
+
+14. **`routeTextRich(text, selected, entries?)`**（`workbench-api.mjs`）：返回 `[{id, matchedTriggers:[...], source:'auto'|'selected'}]`；`matchedTriggers` = 该入口 `triggers` 中实际在文本出现的词（保持触发词声明顺序）；`auto` 为触发词命中、`selected` 为用户勾选追加（两者皆有 → auto）；排序规则与现状一致；原 `routeText` 改为薄壳 `routeTextRich(text,selected,entries).map(x=>x.id)`（validations L175 等旧调用零改动）。
+15. **规则置信度**（不调模型）：`confidence = 50 + Math.min(30, matchedTriggers.length*10) + Math.round(completeness*0.2)`，区间 [50,100]；`source='selected'` 且无命中词时不计算、显示"手动指定"；文案注明"规则置信度（触发词命中数 + 必填完整度，非模型评估）"。
+16. **响应与前端**：`preflight`（L130）与 `runs`（L135 / routeSummary L156）的 `routes[]` 每条附 `matchedTriggers / confidence / source`；预检面板每行显示"命中：报错、异常 · 置信度 70%"或"手动指定"；RunResult 路由页签悬停显示同样内容。
+17. **与 6.14.5 协同**：`entries` 参数位为真源化预留；6.14 实施时匹配源切资产真源，富结构返回不变；两者共用 `routeTextRich` 单点，避免二次返工。
+
+**方案 C：助手页"最近执行与待复核"面板（FR-01）**
+
+18. **后端零改动**（复用 `GET /runs`，L166）。
+19. **前端拉取**（`AssistantPage`）：挂载时与 `execute()` 成功后拉取 `GET /runs?page=1&pageSize=5`（最近执行）与 `GET /runs?status=待复核&pageSize=1`（取 `total` 为待复核数）。
+20. **面板**：智能输入区下方新增「最近执行」紧凑条——头部"最近执行" + "待复核 N"徽标（N>0 高亮），每行 标题 · 主任务 · 风险/状态徽标（待复核显示"AI 草稿"）。
+21. **跳转联动**（`src/main.tsx` + `RunsPage`）：`App` 新增 `runJump` state（`{runId?, status?, nonce}`，nonce 保证重复点击同行也触发），传给 `RunsPage`；`RunsPage` 监听变化：`runId` → `open(id)` 打开详情抽屉，`status` → 预置筛选；消费后清空。验收：执行完成后列表即时刷新、点行打开详情抽屉、"待复核 N"与执行记录页筛选一致。
+
+**方案 D：工作流步骤类型 + 复核项联动 + 资产版本快照（FR-05 部分）**
+
+22. **步骤语法兼容升级**：`workflow_json` 元素允许两种形态——`"步骤名"`（缺省 normal）或 `{"name":"步骤名","type":"manual"|"optional"|"normal"}`；三处消费点适配：`systemPrompt`（L40）步骤渲染（manual → "名称（人工节点）"、optional → "名称（可选）"）；`workflow_run_steps` 写入（L164）取步骤名；编排页（`OrchestrationPage`）文本框行语法 `名称|manual`（无后缀视为 normal），以 `parseStep / serializeStep` 纯函数解析 / 回显。
+23. **复核项动态生成**（L160）：`baseChecks` 固定四项之后追加各 carried 路由 workflow 中 `type==='manual'` 的步骤名（去重、保持路由顺序），文案"已完成『{步骤名}』人工确认"；degraded 路由不追加；U4 服务端勾选门禁（L168）零改动。
+24. **资产版本快照**：`routeSummary` 每条附 `version`（`assets()` 行已带该列），前端路由名后显示"（v2）"；零 DDL；历史 run 无该字段渲染兼容。
+25. **存量兼容**：种子 `INSERT IGNORE`（L117）不覆盖旧库，旧数据纯字符串按 normal 渲染；步骤类型升级依赖编排页发布链路（6.14 实施后走草稿 / 发布，或直接 PATCH）。**不引入条件节点**（表达式引擎成本高、收益低，记取舍，见 6.17.6）。
+26. **验收**：将某入口末步改为 `标记人工复核|manual` → 执行该路由 → Prompt 含"（人工节点）"；复核清单出现该步骤确认项且未勾选时无法通过；结果卡片显示资产版本号；未改动入口零行为变化。
+
+**方案 E：执行成本可观测性**
+
+27. **E1 检索去重**（`knowledge-retrieval.mjs` + `workbench-api.mjs` + `server.mjs`）：
+    - `createRetrieval` 返回对象增加 `embedQuery(text)`（内部 `embed([text])`，返回 `{model, vector}` 或 null）；
+    - `retrieve` 增可选参 `{queryEmbedding}`（L59）：传入时跳过自身 query 向量化（`ensureEmbeddings` 用其 `model` 照常执行），未传时行为与现状完全一致；
+    - `server.mjs` L80 注入处追加 `embedQuery: retrieval.embedQuery`；POST /runs 循环前 `const qe = await options.embedQuery?.(text).catch(()=>null) ?? null`，循环内 `options.retrieve(text, e.knowledge, {queryEmbedding: qe})`（options 缺省对象 L108 增 `embedQuery:undefined`）；
+    - 效果：N 路由省 N-1 次 query embedding 调用；keyword / none 降级路径不受影响。
+28. **E2 Token 用量**（`workbench-api.mjs` + `src/workbench.tsx`）：
+    - `callModelRaw`（L42-47）改为返回 `{content, usage}`（透传 `response.usage`，缺失记 null）；`callModel`（L48-53）返回 `{parsed, usage}` 并同步适配 3 处调用点；`runPromptTest` 逐样例与评审总结分别累计；
+    - POST /runs 聚合：`result.usage = {modelCalls, promptTokens, completionTokens, totalTokens, partial}`（逐调用求和；任一缺失 → `partial:true` 且缺失按 0 计；degraded 路由不计）；
+    - `evidence_json` 追加"Token 用量：prompt {p} / completion {c} / total {t}（{modelCalls} 次调用）"；
+    - 前端 RunResult 头部模型名后追加"模型 N 次调用 · Token X+Y"（`partial` 时附"部分未返回"title）。
+29. **方向边界**：不做金额折算（厂商单价不一，列为后续可选）；usage 缺失时显示"—"且显式标注，不阻断。
+30. **验收**：多路由 run 的 query embedding 调用次数 = 1（假 embedding 端点计数自测）；结果卡片与 evidence 显示 token 用量；usage 缺失时不阻断、标注 partial。
+
+**测试计划**
+
+31. **静态校验**：`node --check workbench-api.mjs`、`node --check knowledge-retrieval.mjs`、`node --check server.mjs`；`npm run check`；`npm run build`。
+32. **后端自测**（临时脚本，跑完清理）：A2（构造 5xx 一次后成功 → 成功且无标注；两次失败 → degraded 标注"已重试 1 次"；400 → 不重试直接 degraded）；A3（整单重跑 → 新 run + evidence 标注 + 原 run 不变；`routeIds` 子集只跑指定路由且顺序正确；重跑失败走原语义）；B（`routeTextRich` 命中词顺序、置信度公式边界、手动指定分支；旧 `routeText` 输出与现状一致）；D（manual 步骤进 Prompt 与复核项、version 透传）；E（embedQuery 计数、usage 聚合与 partial）。
+33. **真机回归**（需已配置 chat 模型）：执行中取消 → 零落库；单路由重跑 → 仅该路由新 run；预检面板显示命中词与置信度；助手页最近执行点击跳转；manual 步骤复核门禁。
+34. **兼容回归**：案例验证（`routeText` 薄壳）、执行记录列表 / 详情 / 复核、沉淀闭环；6.14 未实施前提下硬编码触发词行为不变。
+
+**实施顺序与预估**
+
+| 批次 | 内容 | 预估 | 改动面 |
+| --- | --- | --- | --- |
+| 1 | A2 重试 + E1 检索去重 + E2 Token 用量 | 1 天 | `workbench-api.mjs` + `knowledge-retrieval.mjs` + `server.mjs` + `src/workbench.tsx` |
+| 2 | A1 取消 / 中断 | 0.5~1 天 | `workbench-api.mjs` + `src/workbench.tsx` |
+| 3 | A3 重跑（整单 + 单路由） | 1~1.5 天 | `workbench-api.mjs`（executeCore 抽取）+ `src/workbench.tsx` |
+| 4 | B 命中依据与置信度 | 0.5~1 天 | `workbench-api.mjs` + `src/workbench.tsx` |
+| 5 | D 步骤类型与版本快照 | 1 天 | `workbench-api.mjs` + `src/workbench.tsx`（编排页） |
+| 6 | C 最近执行面板 | 0.5~1 天 | `src/main.tsx` + `src/workbench.tsx` |
+
+批次 1 独立最小价值、可先交付；A3 的 `executeCore` 抽取建议在 6.7.5 C5（SSE）之前实施（同一处理器的友好前置重构）；其余批次相互独立。合计约 4.5~6 天。
+
+**文档回写清单**
+
+35. 各批实施后：4.2 补「取消执行 / 重新执行 / 重跑此路由 / 最近执行面板 / 命中依据」描述；7.2 删除「AI 测试助手 · 执行域」行；本节标注"已实施（第 N 批）"。
+
+#### 6.17.6 假设与边界
+
+- 全部方案零 DDL（D 复用既有列、E 走内存聚合）、零数据删除，可独立实施与回滚。
+- A1 取消语义为"丢弃不落库"（使用者已确认）：与 6.4.2"成功才落库、不改状态枚举、不新增执行中状态"一致；如需保留半成品需重议状态枚举。
+- A3 单路由重跑生成"只含该路由的新 run"（使用者已确认）；重跑不支持修改材料（改材料回助手页发起新执行）。
+- B 置信度为**规则置信度**（触发词命中数 + 完整度），非模型评估；如后续需要模型参与路由（语义识别），单独立项，不在本节。
+- D 不引入条件节点（FR-05 中"条件节点"记取舍）与 P3 风险等级（现状正则与取高链无 P3 触发源，单独引入意义低）；步骤类型升级依赖编排页发布链路（6.14 或直接 PATCH）。
+- E 不做金额折算；`embedQuery` 为可选注入（未注入时 retrieve 行为与现状一致）。
+- **建议记取舍（本次不出方案）**：① FR-06 Prompt 资产化 + Token 预估——U5 已将 Schema 与 Prompt 描述单源化于代码，资产化会重新引入双源漂移风险，与 6.4.5 方向冲突，实际用量已由 E2 覆盖；② 多轮对话式追问——与"整段材料单次提交"产品形态冲突，A3 重跑覆盖"补齐后重新执行"主路径；③ FR-08 References 方法库独立资产——其职责已由触发词 / 字段规则 / risk 正则三处代码承担，6.14.5 承接前两者，剩余部分（risk 判定正则资产化）列为后续独立事项。
+- 与 6.7.5 的分工：C3（附件参与检索）/ C5（SSE）/ C6（分片）以 6.7.5 为准，本节不重复；A1 取消与 C5 的 `reader.cancel()` 已做协同设计。
+
+> 出处：本文档新增归档（2026-10-04），基于当次会话对 `workbench-api.mjs` / `knowledge-retrieval.mjs` / `server.mjs` / `src/workbench.tsx` / `src/main.tsx` 的逐行核对（含 `ENTRY_DEFS` L1-9、`routeText` L26、`systemPrompt` L37-41、`callModelRaw` L42-47、`callModel` L48-53、POST /runs L131-165、复核 PATCH L168、`getRun` L126；`retrieve` L59-77、`ensureEmbeddings` L37-49、`recordHits` L78-80；注入点 L78-80；`AssistantPage` L15-33、`RunResult` L35、`RunsPage` L44、`OrchestrationPage` L46）；采用与 6.5.1 / 6.6 / 6.7 相同的三段式结构（功能定位与使用方式 / 实现链路 / AI 用法分工）；A~E 五组无方案缺口的细化范围、取消语义（丢弃不落库）、重跑范围（整单 + 单路由）三项决策经使用者确认；状态：现状解析与详细方案已归档，未实施。
+
 ---
 
 ## 7. 常见问题与已知行为
@@ -1943,11 +2145,12 @@ G2~G5 均不涉及 AI 与数字红线（纯前端口径与交互问题），建�
 | 分析页（独立任务入口）· 添加附件 | 选择文件后仅提示文件名，首版请粘贴文本（AI 测试助手页已支持文本附件上传与参与分析，见 4.2；独立页附件真实现方案见 6.11） |
 | 分析页（独立任务入口）· 输出结构预览 | 右侧预览的分节（如日志页"错误片段 / 可能原因"）为宣传性文案，实际模型返回通用四字段（summary / risk / suggestions / missingFields）；专属结构升级方案见 6.7.5 C1 |
 | 任务详情 / 执行记录 · 知识沉淀 | 均为人工整理后提交（"申请入知识库" / "沉淀为知识"），无 AI 起草与查重（M5 方案见 6.12） |
+| AI 测试助手 · 执行域 | 执行中无「取消执行」；模型瞬时失败不重试、直接本地兜底；执行记录无「重新执行 / 重跑此路由」；预检面板无命中依据与置信度；助手页无最近执行与待复核面板；不记录 Token 用量（增强方案见 6.17） |
 | 案例验证 | 仅官方示例可运行；无自建案例、运行历史与"全部运行"；通过文案为"路由与规则符合预期"而实际仅断言路由子集（方案见 6.13） |
 | 工作台编排 | "保存并发布新版本"一步即发布（version+1）；无草稿态、验证门禁、版本包、回滚与停用；触发词 / 必填字段的编排修改当前不被运行消费（真源缺陷，方案见 6.14） |
 | 工作台首页 | 「待补充/执行中/阻塞/不可上线」四张指标卡为演示占位值；「待审核/高风险」为最近任务动态统计；数据资产卡为 MySQL 实时统计（详见 4.1；真实统计改造方案见 6.3）；Hero 问候语为静态英文文案；「任务记录」资产卡数字为全类型任务总数而点击落到 Bug 类型列表（细节完善方案见 6.15） |
 
-> 出处：docs/用户操作手册.md 第 17/18 章；方案指引（6.3 / 6.5 / 6.7~6.15）为 2026-10-03~04 增补
+> 出处：docs/用户操作手册.md 第 17/18 章；方案指引（6.3 / 6.5 / 6.7~6.17）为 2026-10-03~04 增补
 
 ---
 
