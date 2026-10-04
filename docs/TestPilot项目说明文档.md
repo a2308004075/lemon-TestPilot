@@ -16,6 +16,7 @@
 6. 设计演进与升级规划
 7. 常见问题与已知行为
 8. 附录：资料索引
+9. TestPilot-my 重新开发方案（Java + Vue + MySQL，2026-10-04 追加）
 
 ---
 
@@ -5028,4 +5029,442 @@ D / E 独立可先交付；B / C 共用弹窗基础建议同批；A 的条目 4 
 
 ---
 
-*文档完 · TestPilot v1.0.0 · 整合自 README.md 与 design/、docs/ 目录原始文档（原文档已删除，本文档为唯一保留版本）*
+## 9. TestPilot-my 重新开发方案（Java + Vue + MySQL，2026-10-04 追加）
+
+> **本章性质**：基于第 1~8 章所述 TestPilot（v1.0.0，Node.js + React + MySQL）进行**整体重写**的完整技术方案。新项目代码库位于 `D:\develop\TestPilot-my`，与原项目相互独立、数据不互通。本章为唯一方案真源；开发实施时逐 Phase 推进，完成后在本章标注实施记录。**已确认决策**（2026-10-04）：后端 Java（JDK 21 + Spring Boot 3 + MyBatis-Plus + Maven）、前端 Vue 3 + TypeScript + Element Plus、数据库 MySQL 8（不使用 SQLite）、功能范围**一步到位**（已实现功能 + 第 6 章全部未实施方案）。
+
+### 9.1 背景与目标
+
+#### 9.1.1 重写动机
+
+| 维度 | 原项目（v1.0.0） | 新项目目标 |
+| --- | --- | --- |
+| 后端 | Node.js 原生 HTTP（无框架、单文件巨石 `server.mjs`） | Java 主流企业栈（Spring Boot 分层工程，学习与求职通用度更高） |
+| 前端 | React 19 + 无路由框架（`setPage` 状态切换） | Vue 3 + Vue Router 正式路由化 + Pinia 状态管理 |
+| 数据层 | 启动时 `CREATE TABLE IF NOT EXISTS` 自动建表 | Flyway 版本化迁移（DDL 与种子数据可追溯、不可变） |
+| 功能完成度 | 7.2 大量演示级/占位行为，第 6 章 30 个方案未实施 | 13 个模块全部真实实现，6.2~6.32 未实施方案全量落地 |
+
+#### 9.1.2 目标态定义（重要原则）
+
+新项目的功能目标 = **原项目已实现功能（第 4、5 章现状 + 6.1 / 6.4 / 6.16 / 6.2-M1M3 已实施部分）+ 第 6 章全部未实施方案（6.2 M2/M4/M5、6.3、6.5~6.15、6.17~6.32）的并集**。
+
+由此推导出一条关键实施原则：
+
+> **「按补丁后目标态一次实现」**——原项目大量方案是针对"现状缺陷打补丁"式设计（如 6.14.5 编排真源缺陷修复、6.32 配置中心补齐、6.3 首页指标去演示值）。新项目**不先复刻缺陷再打补丁**，而是直接按补丁后的目标态实现。例如：工作台编排的触发词/必填项从一开始就从 `wb_asset` 真源读取（不存在"修改不被运行消费"阶段）；首页六张指标卡从一开始就按 6.3.2 全表统计口径实现；配置中心从一开始就支持模块改名、模型删除与 `/models` 探测失败降级。
+
+#### 9.1.3 不变的红线与设计决策（全量沿用）
+
+以下原项目确立的原则在新项目中**原样有效**，属于重写中不可退化的底线：
+
+| 类别 | 内容 | 出处 |
+| --- | --- | --- |
+| AI 使用边界 | 证据不足明确提示缺项、不编造知识标题/Bug 编号、AI 不做上线批准、全程可追溯 | 1.3 |
+| 设计红线 R1~R8 | 只检索已发布知识 / AI 不发布不修改知识 / 不编造 / Key 不入库不进快照 / 快照不可篡改 / 不伪造成功 / AI 引用为软引用 / 知识事实不复制到工作台 | 6.2.3 |
+| 执行模式 | 固定 7 步执行链路、多入口顺序调度（主任务唯一）、串行执行、单路由兜底、180 秒总预算、**同步一次性落库不引入轮询** | 2.3 / 2.4 / 6.4.2 |
+| 复核门禁 | 逐项勾选 + 服务端强校验 + P0 二次确认 + 未复核 = "AI 草稿" + 风险单向取高 | 6.4.5 / FR-11 |
+| 报告数字确定性 | 统计数字一律确定性规则计算，AI 仅生成文字叙述且受数字守卫约束 | 6.10 T2 |
+| 知识沉淀门禁 | AI 产物只能以待审核入库，发布动作仅人工触发；沉淀需 `run.status='已完成'` 门禁 | 6.4.4 |
+| 删除不做 | 全项目无 DELETE 端点是刻意设计（审计价值 + 快照不可篡改） | 6.4.7 |
+| 知识库-工作台分离 | 知识库管事实，工作台资产管"如何做"，`knowledge_json` 只存分类映射单一真源 | 6.1.2 / 6.2.2 |
+
+### 9.2 总体技术选型
+
+| 层 | 选型 | 说明 |
+| --- | --- | --- |
+| JDK | **21 LTS** | Records、虚拟线程（可选用于模型调用 IO）等特性可用 |
+| 后端框架 | **Spring Boot 3.5.x**（Web MVC + Validation + Actuator） | 单体应用、分包不拆微服务（本地单人工具，无并发队列需求） |
+| ORM | **MyBatis-Plus 3.5.x** | `BaseMapper` 通用 CRUD + `LambdaQueryWrapper`；JSON 字段经 TypeHandler 映射 |
+| 数据库访问 | mysql-connector-j + HikariCP（SB 默认池） | 连接参数经 `application.yml` / 环境变量覆盖（`DB_HOST` 等，对齐原项目口径） |
+| 数据库迁移 | **Flyway** | `V1__init.sql` 建表 + `V2__seed.sql` 种子；迁移不可变、只增不改 |
+| 大模型调用 | **自研 OpenAI 兼容客户端**（JDK HttpClient 封装，不引入 Spring AI） | 原因：忠实复刻既有链路（多厂商 + `purpose` 隔离 + 超时钳制 + 429/5xx 重试 + 原始文本取回），Spring AI 抽象层与"逐样例真运行 / chatRaw"等定制点匹配度低，自研可控性更强 |
+| 构建 | Maven 3.9+（附 mvnw wrapper） | `mvn spring-boot:run` 开发、`mvn package` 产出 fat jar |
+| 前端框架 | **Vue 3.5 + TypeScript + Vite 6** | Composition API + `<script setup>` |
+| 状态/路由 | Pinia + Vue Router 4 | 13 个业务路由（对比原项目 `setPage`，属架构正规化） |
+| UI 库 | **Element Plus** | 表格/抽屉/表单/分页组件覆盖度高；主色定制为琥珀黄对齐原"黄色主题" |
+| HTTP | Axios | 统一封装：错误 notify、常规请求 15s 超时、**长请求通道 200s**（`POST /runs` 等模型调用） |
+| 图标 | lucide-vue-next | 对齐原项目 lucide-react 图标体系 |
+| 导出 | Markdown（Blob 下载）；XLSX（`xlsx` 库）；PDF（浏览器打印方案，见 9.10 D8） | |
+| 数据库 | **MySQL 8.x**，库名 `testpilot_my` | JDBC URL 加 `createDatabaseIfNotExist=true` 首次自动建库；与原库 `testpilot` 隔离 |
+| 端口 | 后端 `8080`（`server.port` 可覆盖）；开发期前端 Vite `5173` 代理 `/api` → 8080；**生产模式后端托管前端 dist，单端口访问**（对齐原项目"一个端口"体验） | |
+
+### 9.3 工程结构与总体架构
+
+#### 9.3.1 目录结构
+
+```text
+TestPilot-my/
+├── backend/                          # Spring Boot 单体（分包不拆模块）
+│   ├── pom.xml
+│   └── src/main/
+│       ├── java/com/testpilot/
+│       │   ├── TestPilotApplication.java
+│       │   ├── config/               # Web/CORS/MyBatis-Plus/异步线程池/长请求超时
+│       │   ├── common/               # 统一响应体 ApiResult、业务异常、分页参数、审计切面
+│       │   ├── controller/           # REST 控制器（按资源划分，仅做参数校验与委托）
+│       │   ├── service/              # 业务服务（模块树/用例/任务/回归/报告/知识/配置）
+│       │   ├── mapper/               # MyBatis-Plus Mapper 接口
+│       │   ├── entity/               # 数据库实体（含 TypeHandler JSON 字段）
+│       │   ├── dto/                  # 请求/响应 DTO（record 优先）
+│       │   ├── ai/                   # AI 引擎域：ProviderRegistry、OpenAiCompatClient、
+│       │   │                         #   PromptAssembler、OutputSchemaValidator、RiskMerger、
+│       │   │                         #   BudgetController（180s 预算）、RetryPolicy
+│       │   ├── workbench/            # 工作台引擎域：EntryRouteService（触发词路由+富命中）、
+│       │   │                         #   WorkflowExecutor（串行执行+取消令牌）、PromptTestRunner、
+│       │   │                         #   ValidationService（案例验证）、轻量生成端点服务
+│       │   ├── knowledge/            # 检索域：EmbeddingService、RetrievalService（三级降级）、
+│       │   │                         #   HitRecorder（软引用）、EmbeddingMaintenance
+│       │   └── security/             # KeyStore：AES-256-GCM 主密钥 + provider 密文文件
+│       └── resources/
+│           ├── application.yml
+│           └── db/migration/         # Flyway：V1__init.sql、V2__seed.sql、V3__…
+├── frontend/                         # Vue 3 SPA
+│   ├── package.json / vite.config.ts / tsconfig.json
+│   └── src/
+│       ├── main.ts / App.vue
+│       ├── router/                   # 13 个业务路由 + 全局路由守卫
+│       ├── stores/                   # bootstrap（模块/厂商/计数）、ui（抽屉/通知）
+│       ├── api/                      # axios 实例 + 按资源模块化的 API 封装
+│       ├── components/               # 通用组件：DetailDrawer、RunResult、KnowledgeSink、
+│       │                             #   CaseSink、RegressionSink、ReportSink、CasePreview、
+│       │                             #   SuiteDialog、WBadge 等
+│       ├── views/                    # 13 个页面（dashboard/assistant/runs/cases/analysis-*/
+│       │                             #   regression/reports/knowledge/orchestration/
+│       │                             #   validation/settings）
+│       └── styles/                   # 黄色主题变量 + Element Plus 主色定制
+├── data/                             # 运行时数据：keys/（master.key + provider 密文）、backups/（导出 JSON）——不入 git
+├── logs/                             # 运行日志
+├── scripts/                          # start.bat / start.sh（检查环境 → 构建 → 启动 → 开浏览器）
+└── README.md / docs/                 # 新项目说明（引用本文档第 9 章为方案真源）
+```
+
+#### 9.3.2 总体架构
+
+```mermaid
+flowchart LR
+    subgraph 前端 frontend
+        F1[Vue 3 SPA<br/>13 路由 · Pinia · Element Plus]
+    end
+    subgraph 后端 backend[Spring Boot 8080]
+        C[controller 层]
+        S[service 层]
+        subgraph 引擎域
+            WB[workbench 工作台引擎<br/>路由·工作流·Prompt测试·案例验证]
+            AI[ai 引擎<br/>模型客户端·Prompt组装·Schema校验]
+            KB[knowledge 检索域<br/>embedding·三级降级·软引用]
+        end
+        M[mapper / MyBatis-Plus]
+        KS[security KeyStore<br/>data/keys AES-GCM]
+    end
+    DB[(MySQL 8<br/>testpilot_my)]
+    LLM[外部 OpenAI 兼容 API<br/>OpenAI / 通义千问 / DeepSeek / 自定义]
+
+    F1 -- "REST /api（axios，长请求 200s）" --> C --> S --> 引擎域 --> M --> DB
+    WB --> AI --> LLM
+    WB --> KB
+    AI -- "读 Key" --> KS
+    KB --> AI
+    subgraph 生产形态
+        P[Spring Boot 托管 frontend/dist → 单端口 8080]
+    end
+```
+
+要点：
+
+1. **三个引擎域保持原项目的依赖倒置结构**：`WorkflowExecutor` 通过接口注入 `RetrievalService`（`retrieve` / `recordHits`）与 `readProviderKey`，便于单测（对齐原 `createWorkbench(db, {...})` 注入设计）；
+2. **前后端开发形态**：开发期 Vite dev server（5173）+ `/api` 代理；生产期 `npm run build` 产物拷入 `backend/src/main/resources/static`（或打包脚本合并），`java -jar` 单进程单端口；
+3. **长请求**：`POST /api/workbench/runs` 同步执行（最长约 180s + 前端取消窗口），后端配置 Tomcat 连接与异步超时 ≥ 210s，前端 axios 该端点专用 200s 超时；
+4. **取消机制（对齐 6.17 A1 / D-17-2"取消即丢弃不落库"）**：执行请求携带前端生成的 `executionToken`；后端以 `ConcurrentHashMap<token, AtomicBoolean>` 注册执行中标志，`POST /api/workbench/executions/{token}/cancel` 置位；串行循环每路由开始前检查，已取消则中断且**不落库**。（相比原方案依赖 HTTP 连接断开检测，令牌方式在 Servlet 容器下更可靠，语义一致。）
+
+### 9.4 数据库设计
+
+#### 9.4.1 设计约定
+
+| 项 | 约定 | 说明 |
+| --- | --- | --- |
+| 库 | `testpilot_my`（utf8mb4 / utf8mb4_0900_ai_ci / InnoDB） | JDBC URL `createDatabaseIfNotExist=true` 首启自动建库 |
+| 主键 | `BIGINT AUTO_INCREMENT` | 替代原项目字符串主键；**业务编号列**（如 `code`）保留人读性与溯源（`TC-xxx`、`reg-xxx`），溯源复合值 `source_task_id` 沿用 `${runId}#${routeId}` 语义 |
+| JSON 快照 | `LONGTEXT` + Jackson TypeHandler | **不用 MySQL JSON 类型**：JSON 类型会重排键序与规范化空白，违背 R5"历史快照不可篡改"的保真诉求；LONGTEXT 原样存取 |
+| 状态/枚举 | 中文枚举字符串入库 | 与原项目一致（`status='待审核'` 等），避免映射层双源；实体侧以常量类约束 |
+| 建表/种子 | Flyway `V1__init.sql` + `V2__seed.sql` | 种子数据对齐原项目口径（模块树、7 入口资产、4 厂商、演示任务/用例/知识/回归/报告/验证案例）；迁移**不可变、只增不改** |
+| 删除 | 无 DELETE 端点、无物理删除 DDL | 对齐 6.4.7"删除不做"决策；停用走 `enabled` 软停用 |
+
+#### 9.4.2 表清单（17 张）
+
+| 域 | 表 | 关键列 | 对应原表 | 承接要点 |
+| --- | --- | --- | --- | --- |
+| 配置 | `sys_module` | level(1/2/3)/project_name/module_name/submodule_name/enabled/sort_order | modules | 三级模块树；创建后可编辑（6.32 C2 直接做对）、可停用恢复 |
+| 配置 | `sys_provider` | name/base_url/model/enabled/**purpose(chat\|embedding)**/temperature/timeout_seconds/max_tokens/**has_key** | providers | 4 家预置 + 自定义；**Key 不入库**（密文在 data/keys，表内仅 has_key 标志）；可删除可改名（6.32 C3/C4 目标态） |
+| 配置 | `sys_setting` | key/value | settings | `template-{task}` 等；模板降级为纯参考并如实标注（6.32 C1 目标态） |
+| 配置 | `sys_audit_log` | resource_type/resource_id/action/detail_json/created_at | 审计（原内置） | 统一审计，复核/发布/沉淀等动作落审计 |
+| 知识 | `kb_knowledge` | title/category/module_id/risk/status/version/content/source_task_id/review_note | knowledge | 7 分类；审核门控 + 版本化；创建即 `status='待审核'` 且 `review_status` 同步（修正 6.3.4 发现的不一致） |
+| 知识 | `kb_relation` | source_type/source_id/target_type/target_id/label/active | relations | 硬引用 409 保护；**写入方扩展**：沉淀/申请入库自动登记 + 报告来源 + 用例批次（6.30 K4 目标态） |
+| 知识 | `kb_embedding` | knowledge_id/version/vector(BLOB)/vector_model/dim/updated_at | knowledge_embeddings | float[] 序列化 BLOB；按 version 判过期 |
+| 知识 | `kb_retrieval_hit` | run_id/route_id/knowledge_id/title_snapshot/version_snapshot/score/method | retrieval_hits | 软引用，不参与撤销保护（R7）；人侧可读（6.30） |
+| 工作台 | `wb_asset` | entry_id/name/triggers_json/required_fields_json/knowledge_json/workflow_json/version | workbench_assets | 7 入口配置**唯一真源**；运行时路由/必填/知识映射全部实时读此表（6.14.5 真源缺陷直接做对） |
+| 工作台 | `wb_run` | title/text/module_id/routes_json/input_json/result_json/evidence_json/missing_json/review_json/status/risk/provider_name/model_name/usage_json/created_at | workflow_runs | result 含 routeSummary（loadedKnowledge 快照、degraded、命中依据与置信度）；steps 版本与耗时（6.17） |
+| 工作台 | `wb_run_step` | run_id/step_index/step_name/route_id/status/started_at/completed_at/note | workflow_run_steps | 真实起止时间；note 记录兜底原因与重试标注 |
+| 工作台 | `wb_prompt_suite` | title/prompt_text/expected_schema/samples_json/module_id/version/status | prompt_test_suites | 6.16 成果复刻；**含 status 消费**（停用/删除能力，6.26 缺口直接做对） |
+| 工作台 | `wb_validation_case` | title/material_json/expected_routes_json/expected_rules_json/expected_knowledge_json/last_result_json/created_by | validation_cases | 官方示例 + **自建案例**（6.13）；知识断言列（6.13.7） |
+| 业务 | `biz_case` | code/title/module_id/priority/case_type/status/version/archived/content_json(含 `_meta` 与 precondition/steps/expected/testData) | cases | AI 来源 `_meta`（source/model/generatedAt/runId/routeId）；编辑升版；执行状态独立（6.5.8） |
+| 业务 | `biz_task` | title/type(bug\|log\|sql)/module_id/risk/status/input/result_json/review_status/review_note/provider_name/model_name/attachments_json | tasks | 独立分析页任务；**创建即 status 与 review_status 同步**（修正 6.3.4） |
+| 业务 | `biz_regression` | title/version/module_id/status/progress/source_task_id/data_json(items 含 source/reason/required) | regressions | 创建端点 + 必选项口径进度（6.9 D7）+ 完成归档分流（6.9 D8） |
+| 业务 | `biz_report` | title/project_name/version/verdict/data_json(含 narrative 双形态/statsAvailable) | reports | 直存路径（6.10.7 E3）+ 趋势对比数据源（6.10.8） |
+| 业务 | `biz_case_batch` | title/module_id/status/started_at/data_json(逐条执行结果) | （新增） | 用例执行批次子系统（6.11 W3） |
+
+> 关键差异说明：① 原 `workflow_runs` 等表的 `id` 为随机字符串，新表用 BIGINT 主键 + `source_task_id` 复合溯源值中携带的 runId 改用业务编号（`RUN-yyMMdd-xxxx`），对"沉淀为知识 / 存入用例库 / 转回归 / 存报告"的 `LIKE 'runId#%'` 聚合查询改为 `source_run_id` 显式列索引查询，消除前缀模糊匹配；② 原项目启动时 `information_schema` 检查补列（如 `providers.purpose`、`regressions.source_task_id`）的模式整体废弃，统一由 Flyway 管理。
+
+#### 9.4.3 沉淀/转入溯源关系（新设计）
+
+原项目四条"结果出口"（沉淀知识 / 存用例 / 转回归 / 存报告）均以 `source_task_id LIKE 'runId#%'` 反查聚合。新项目统一为**显式关系**：
+
+- `kb_knowledge.source_ref`：`{type:'run'|'task', id, routeId?}`（JSON，替代字符串反拆）；
+- `biz_case.content_json._meta`：含 `runId / routeId / source`（沿用 6.5 A4 设计但改为 BIGINT id）；
+- `biz_regression.source_run_id` + `source_route_id`（替代 LIKE）；
+- `biz_report` 直存经 `kb_relation`（`report→run`）+ `data_json.runId` 双保险（沿用 6.10.7 E2/E4）。
+
+对应"已沉淀 / 已存入 / 已转入 / 已存报告"的按钮置灰判断改为各域精确查询（`getRun` 聚合 `knowledgeLinks / caseLinks / regressionLinks / reportLinks` 四组，一次性返回）。
+
+### 9.5 后端设计
+
+#### 9.5.1 REST API 清单
+
+| 分组 | 端点 | 说明 |
+| --- | --- | --- |
+| 通用 | `GET /api/bootstrap` | 模块树 + 厂商（脱敏）+ 各域计数 |
+| 首页 | `GET /api/dashboard/metrics` | 六指标全表统计（6.3.2 口径：待补充/待审核/执行中/阻塞/高风险/不可上线） |
+| 模块 | `GET/POST /api/modules`、`PATCH /api/modules/{id}` | 全字段 `??` 合并改名 + enabled + sort_order（6.32 C2 目标态） |
+| 厂商 | `GET/POST /api/providers`、`PATCH /api/providers/{id}`、`DELETE /api/providers/{id}`、`POST /api/providers/{id}/key`、`POST /api/providers/{id}/test` | Key 经 security 域加密存取（`POST .../key` 写入、`DELETE` 清除）；**PATCH 只更新请求携带字段**（修复"缺 enabled 字段静默停用"）；测试连接先探 `{BaseURL}/models`、失败降级发 1-token chat 请求（6.32 C5）；可删除（先停用） |
+| 设置 | `GET/PATCH /api/settings` | 模板等键值 |
+| 知识 | `GET /api/knowledge`（q/category/status/module_id/分页）、`GET /api/knowledge/{id}`（dependencies+referenceCount）、`POST`、`PATCH /{id}`（approve/reject/withdraw/edit 升版）、`POST /api/knowledge/import` | withdraw 遇 active 硬引用 409 + 依赖清单；批量导入（6.11 W2：JSON 数组、全部待审核、同题同分类跳过、预览） |
+| 知识·人侧 | `GET /api/knowledge/search?mode=semantic\|keyword`、`GET /api/knowledge/{id}/impact`、`GET /api/knowledge/embeddings/status`、`POST /api/knowledge/embeddings/reembed` | 6.30：语义搜索、影响分析（软硬引用汇总）、嵌入状态（含跨模型失效检测）、手动全量重嵌 |
+| 独立分析 | `POST /api/ai/analyze` | Bug/日志/SQL 单项分析；**注入知识检索（6.2 M2）**：`retrieve(type→分类映射) → systemPrompt 注入事实 → hits 落软引用 → 响应携带 loadedKnowledge`；模型选择下拉支持（6.7.7 N1）；风险三方取高（6.7.7 N5）；模型失败回退本地规则并显式标注（R6） |
+| 任务 | `GET/POST/PATCH /api/tasks`、`POST /api/tasks/{id}/reanalyze`、`POST /api/tasks/{id}/knowledge-draft` | 复核流转（提交/通过/驳回含原因）；重新分析（6.8 T2）；申请入知识库（登记硬引用，6.30 K4） |
+| 助手 | `POST /api/workbench/preflight`、`POST /api/workbench/runs`、`GET /api/workbench/runs`（分页/筛选/搜索）、`GET /api/workbench/runs/{id}`、`PATCH /api/workbench/runs/{id}`（复核）、`POST /api/workbench/runs/{id}/rerun`、`POST /api/workbench/executions/{token}/cancel` | preflight/runs 响应 routes 含 `matchedTriggers/confidence/source`（6.17 B）；执行串行 + 取消令牌 + 重试（6.17 A）；rerun 整单/单路由（6.17 A3）；复核服务端强校验 checks（6.4.5） |
+| 轻量生成 | `POST /api/workbench/cases/generate`、`POST /api/workbench/regressions/generate`、`POST /api/workbench/reports/narrative` | 均不写 `wb_run`（6.5 A1 / 6.9 D3 / 6.10 T4 同模式）；cases 生成失败 502 硬阻断；regressions 规则打底 + AI 增强、模型失败不阻断；narrative 带数字守卫 |
+| 测试集 | `GET/POST /api/workbench/suites`、`PATCH /api/workbench/suites/{id}`、`DELETE /api/workbench/suites/{id}` | 6.16 复刻 + status 停用/删除（6.26 目标态）；执行时快照测试集版本与被测 Prompt 原文（6.26） |
+| 案例验证 | `GET/POST /api/workbench/validations`、`POST /api/workbench/validations/{id}/run`、`POST /api/workbench/validations/run-all` | 自建案例 + 运行历史 + 全部运行（6.13）；断言含 expectedRules 与知识断言（6.13.7） |
+| 用例 | `GET/POST/PATCH /api/cases`（分页/筛选/搜索含步骤与预期内容）、`POST /api/cases/batches`、`PATCH /api/cases/batches/{id}` | 升版编辑；批次创建与逐条结果（6.11 W3）；搜索范围扩展（6.28） |
+| 回归 | `GET/POST /api/regressions`（q/status/module_id/分页）、`PATCH /api/regressions/{id}` | 创建含 `sourceRunId` 查重 409（6.9.7 D6）；条目规范化 + 必选项进度口径（D7）；列表搜索分页（6.31） |
+| 报告 | `GET/POST /api/reports`（分页/搜索）、`GET /api/reports/{id}`（含审计） | 直存路径校验矩阵（6.10.7 14~16）；列表分页搜索（6.25 G4）；详情审计（G5） |
+| 审计 | `GET /api/audit?resourceType=&resourceId=` | 统一审计查询 |
+
+#### 9.5.2 AI 引擎域（`ai` 包）
+
+| 组件 | 职责 | 对齐原实现 |
+| --- | --- | --- |
+| `ProviderRegistry` | 读 `sys_provider` + KeyStore 解密；`pickProvider(providerId?, purpose)`：指定时校验 enabled+purpose+Key，否则取第一个已启用已配 Key 的 chat 模型；无可用 → 400 阻断 | workbench-api 选模型逻辑 |
+| `OpenAiCompatClient` | `chat(provider, key, messages, params)`（JSON 输出）/ `chatRaw`（原始文本，Prompt 测试真运行用）/ `embed(provider, key, texts)`；超时钳制 [5,30]s；**可重试错误（429/5xx/网络/JSON 截断）间隔 800ms 重试 1 次**；usage（token 用量）随响应返回 | callModel / callModelRaw + 6.17 A2 |
+| `PromptAssembler` | system 消息组装：角色声明 + 所属模块 + 工作流步骤 + 已发布知识事实列表（`[分类] 标题（v版本，风险）：摘要`，无命中注入"未检索到相关知识，禁止虚构"）+ 安全规则 + **由结构化 Schema 单源生成的输出字段说明** | systemPrompt + 6.4.5 U5 单源化 |
+| `OutputSchemaValidator` | `{字段: {type: string\|string[]\|object[], label, required}}` 逐字段校验；object[] 逐条校验 title/steps/expected 并带"第 N 条"定位；返回 `{passed, missing[], typeErrors[]}` | validateOutput（含 6.5.3 / 6.10.7 E5 扩展） |
+| `RiskMerger` | 正则初判（含各领域扩展词表：6.6.10 Bug 域、6.22 英文 error/exception/timeout、6.23 SQL 高危词、6.24 发布域词、6.25 报告域词）+ 模型 `risk_level` **单向取高** | risk 合并 + 词表增强 |
+| `BudgetController` | 全路由总预算 180s；单路由超时走本地兜底模板 + `degraded` 标注 + 步骤 note"本地兜底：{原因}（已重试 1 次）"；全部路由失败 → 502 不落库 | 6.4.6 U6 |
+| `EntryRouteService` | 触发词路由（**实时读 `wb_asset` 真源**）；`routeTextRich` 返回 `[{id, matchedTriggers, source, confidence}]`；规则置信度 = 50 + min(30, 命中数×10) + round(完整度×0.2)；勾选追加为 selected；无命中默认 bug_analysis 并显式标注回退 | routeText + 6.17 B + 6.14.5 |
+
+#### 9.5.3 工作台引擎域（`workbench` 包）
+
+- `WorkflowExecutor`（核心，对应原 `POST /runs` 主体）：
+  1. 选模型（ProviderRegistry，无可用 400）→ 2. 路由识别（EntryRouteService 富结构）+ 缺项检查（fieldPresent 正则规则表，**词表按 6.21~6.26 增强后的目标态**：变体识别 `/i` 大小写、SQL 无空格形态、发布/上线形态、相对时间表达等）+ 风险初判 → 3. 附件拼接（include 开关，每文件前 8KB）→ 4. **串行循环**（每路由开始前查取消令牌）：`retrieve(text+附件前 2000 字, entry.knowledge)` → `PromptAssembler` → `OpenAiCompatClient.chat` → `OutputSchemaValidator` → 单路由失败/超时兜底；Prompt 测试路由走 `PromptTestRunner` → 5. 风险单向取高 → 6. 组装 result（model/sections/routeSummary 含 loadedKnowledge 快照与 retrievalMethod/usage 汇总）→ 7. 三表落库（`wb_run` + `wb_run_step` + `kb_retrieval_hit`）→ 8. 返回 `getRun(runId)`（含四组 links 聚合）。
+  - **上一步产物传递**（6.18）：串行循环中把已完成路由的结构化输出摘要注入下一路由 user 消息（可开关，默认开）。
+- `PromptTestRunner`（6.16 复刻）：测试集（`suiteId`）优先、材料解析兜底；逐样例 `chatRaw` 真运行（受总预算约束，超时样例标"未运行"）；5 种机器判定（exact/contains/json_fields/regex/manual），verdict 由规则产生不可被模型更改；一次评审总结生成 checks/decision；逐样例步骤落 `wb_run_step`。
+- `ValidationService`（6.13 目标态）：官方示例 + 自建案例；单案例运行与全部运行；断言 = 路由子集断言 + expectedRules 规则断言 + **知识断言**（期望知识可被检索命中，6.13.7）；运行历史落 `last_result_json` 与运行历史表；纯规则执行不调模型。
+- 轻量生成服务：`CaseGenerateService`（6.5：`cases` object[] Schema、失败 502 零写入）、`RegressionGenerateService`（6.9：规则聚合保底 ≥6 条 + AI 增强不阻断）、`ReportNarrativeService`（6.10 T4：叙述生成 + 数字守卫 `_narrative_check`）。
+
+#### 9.5.4 知识检索域（`knowledge` 包）
+
+- `EmbeddingService`：发布/编辑升版/撤销/导入触发重嵌（`@Async` fire-and-forget，失败置 pending 不阻断业务，R6 显式可查）；检索时懒补偿（批量 16 条）；`reembedAll` 全量重嵌；`embeddings/status` 透出向量模型一致性检测（跨模型静默失效可见化，6.30）。
+- `RetrievalService`：`retrieve(text, categories)` 三级降级——semantic（embedding 向量化 + 应用层余弦 ≥0.3 Top5）→ keyword（中文 2~3 字 n-gram 滑窗 + 英文 token，标题 ×3 / 正文 ×1 Top5）→ none（显式声明）；候选强制 `status='已发布'` 且分类在白名单（**白名单唯一真源 = `wb_asset.knowledge_json`**，消除双源，6.6.6）。
+- `HitRecorder`：命中写 `kb_retrieval_hit` 软引用（含 title/version 快照、score、method）；人侧影响分析读软 + 硬引用汇总（6.30）。
+- **不引入向量库**（沿用 6.2 已确认决策）：BLOB 存 float[] + 应用层余弦，个人规模（千级知识条目）性能充分。
+
+#### 9.5.5 密钥安全域（`security` 包）
+
+- `KeyStore`：首次启动生成 256-bit 主密钥 `data/keys/master.key`；每厂商 Key 以 AES-256-GCM 加密存 `data/keys/provider-{id}.key`（随机 IV 前置存储）；提供 `save / read / remove`（补齐原缺 remove，6.32 C3）。
+- Key 全程不出现在：数据库、日志、run/任务快照、错误响应（R4）。
+- 跨机语义对齐原 DPAPI：`master.key` 属本机私有（.gitignore），换机后密文不可解，需在配置中心重新录入。
+
+### 9.6 前端设计
+
+#### 9.6.1 路由与页面结构（对比原 `setPage` 正式路由化）
+
+| 路由 | 页面 | 对应原模块 | 核心组件 |
+| --- | --- | --- | --- |
+| `/dashboard` | 工作台首页 | 01 | Hero、指标卡（真实统计）、快捷入口、数据资产、最近任务表 |
+| `/assistant` | AI 测试助手 | 02 | AssistantForm（入口勾选/智能输入/附件/测试集选择栏）、PreflightPanel、RunResult、最近执行面板（6.17 C） |
+| `/runs` | 执行记录 | 05 | RunList（搜索/风险/模块/复核状态筛选/分页 20/50/100）、RunDetail（结果卡片 + 轨迹 + 导出） |
+| `/cases` | 用例库 | 09 | CasesList（模块树 + 筛选 + 批量操作）、CaseEditor、CaseGenerator（AI 双模式）、批次页签 |
+| `/analysis/bug` `/analysis/log` `/analysis/sql` | 三类专项分析 | 12/13/14 | AnalysisPage（共享组件，type 参数化：新建分析含附件、任务列表分页、已入库经验） |
+| `/regression` | 回归测试 | 15 | RegressionList（清单卡片 + 完成记录分流）、GenerateRegression（规则+AI 预览）、RegressionItemDetail |
+| `/reports` | 测试报告 | 16/17/18 | ReportList（搜索分页）、GenerateReport（项目下拉 + 来源三类勾选 + AI 叙述开关）、ReportDetail、ReportTrend（趋势对比） |
+| `/knowledge` | 知识库 | 19/20/21 | KnowledgeList（语义/关键词搜索 + 嵌入状态入口）、KnowledgeModal、DetailDrawer（审核/升版/撤销/影响分析）、ImportModal |
+| `/orchestration` | 工作台编排 | 07 | EntryEditor（触发词/必填/知识映射/工作流四类配置 + 校验 + 版本历史 + 恢复默认） |
+| `/validation` | 案例验证 | 08 | CaseCards（自建 + 官方）、RunHistory、RunAll |
+| `/settings` | 配置中心 | 22/23/24 | ModuleTree、ProviderPanel（含 Key 管理/测试连接/删除）、TemplatePanel（纯参考标注）、RelationPanel（读 `wb_asset` 真源） |
+
+#### 9.6.2 状态管理与通用组件
+
+- **Pinia stores**：`bootstrapStore`（模块树、厂商列表、计数、chatProviders 计算属性）；`uiStore`（全局 DetailDrawer 状态、通知队列）。
+- **全局 DetailDrawer**：对齐原项目"跨页跳转复用"模式——抽屉内资源详情（case/knowledge/task/run/regression-item/report）支持"来源任务 / 引用知识 / 关联 run"互跳，跳转经 `router.push` + query 携带 drawer 参数（或 store 持有跳转链上下文），保留原"点击行 → 滑出抽屉 → 点击溯源链接 → 跳页并自动开抽屉"交互。
+- **RunResult 组件族**（最复杂）：路由页签、结构化 JSON 分块、知识引用行（可点击跳知识库，6.20）、`_schema_check`/`degraded` 黄色徽标、Prompt 测试逐样例对照表（六列）、逐路由耗时（6.20）、复核栏（勾选 + 备注 + P0 二次确认）、四类出口按钮（沉淀知识 / 存用例库 / 转回归清单 / 存测试报告，含已处理置灰态）、「重新执行 / 重跑此路由」按钮。
+- **主题**：CSS 变量定义琥珀黄主色 + Element Plus `--el-color-primary` 定制；WBadge/进度环等沿用原视觉语言（黄色主题、状态色：通过绿/失败红/阻塞橙）。
+
+#### 9.6.3 前端专项承接（原 6.x 前端类方案）
+
+| 能力 | 承接 |
+| --- | --- |
+| 输入草稿保存（6.18 F） | assistant 表单文本/附件名/勾选状态自动存 localStorage，恢复提示 |
+| 预检面板自动刷新（6.19 F） | 入口勾选、附件增删、测试集选择变化 → 防抖自动重跑 preflight |
+| 缺项分级展示（6.18 H） | 缺核心字段（阻塞级）红色区隔 + 禁用「按流程执行」；建议级黄色 |
+| 复核终态约束（6.20 R2） | 已完成记录复核动作锁定，历史留痕（服务端审计） |
+| 风险人工修正（6.20 R4） | 复核栏风险下拉仅允许在"规则与模型较高值"基础上人工确认或上调 |
+| 执行中取消（6.17 A1） | busy 态按钮变「取消执行」→ 调 cancel 端点 → 前端复位不弹错 |
+| 耗时与 Token 透出（6.17 D/E） | run 头部总耗时、每路由 durationMs、usage token 数徽标 |
+| 报告趋势对比（6.10.8） | 按项目分组 + 版本语义升序 + CSS 分段条（compareVersion 纯函数入单测） |
+| 导出 | Markdown（前端拼装 Blob）；XLSX（含回归清单"类型/来源"列，6.31）；PDF 走浏览器打印（9.10 D8） |
+
+### 9.7 功能范围与增强承接总表
+
+#### 9.7.1 已实现功能复刻基线（Phase 验收下限）
+
+| 模块 | 复刻基线（原项目已实现） |
+| --- | --- |
+| 工作台首页 | 布局三区、六指标卡、快捷入口、数据资产、最近任务 + 详情抽屉（指标口径直接按 6.3.2 真实统计实现） |
+| AI 测试助手 | 7 入口路由、preflight 识别与缺项、串行执行 + 知识注入 + Schema 校验 + 风险取高 + 180s 预算 + 单路由兜底、附件 8KB、复核门禁、沉淀知识、导出 Markdown |
+| Prompt 测试 | 测试集资产化、逐样例真运行、5 规则机器判定、对照表、复核必选（6.16 全量复刻） |
+| 执行记录 | 列表搜索筛选分页、详情（结果 + 轨迹）、复核（勾选 + 备注 + 400 强校验）、导出 JSON/Markdown |
+| 用例库 | 三级模块、筛选、XLSX/JSON 导出、批量操作、新增、详情抽屉 |
+| 独立分析三页 | 新建分析、任务列表、已入库经验、审核流转、申请入知识库、本地规则回退 |
+| 回归测试 | 清单卡片、进度环、逐条状态、XLSX/Markdown 导出、复制待办 |
+| 测试报告 | 列表、生成（确定性统计）、详情、Markdown 导出 |
+| 知识库 | 7 分类、审核门控、版本化、引用保护 409、CRUD、沉淀反向、检索三级降级 + 软引用 |
+| 工作台编排 | 7 入口四类配置编辑、版本递增、历史快照保留 |
+| 案例验证 | 官方示例、路由断言、运行展示 |
+| 配置中心 | 三级模块树（增/改/停用）、大模型（4 厂商 + purpose + Key + 测试连接）、格式模板、关联规则 |
+
+#### 9.7.2 未实施方案承接映射（6.2~6.32 全量 → 新项目目标态）
+
+| 原方案 | 核心内容 | 新项目落点 | 分期 |
+| --- | --- | --- | --- |
+| 6.2 M2 | 独立分析页知识注入 | `POST /api/ai/analyze` 检索注入 + 引用卡片展示 | P4 |
+| 6.2 M4（用例） | 用例 AI 起草 | 与 6.5 合并：双模式生成 + 预览勾选入库 | P5 |
+| 6.2 M4（回归） | 回归清单从零建 | 与 6.9 合并：规则打底 + AI 增强 + 创建端点 | P5 |
+| 6.2 M4（报告） | 报告 AI 增强章节 | 与 6.10 合并：T1~T4 + 直存 + 趋势 | P5 |
+| 6.2 M4（案例） | 案例验证知识断言 | 与 6.13.7 合并 | P4 |
+| 6.2 M5 / 6.12 | AI 起草知识闭环（查重 ≥0.90 建议升版 → 起草 → 待审核） | `POST /api/tasks/{id}/knowledge-draft`（AI 起草版）+ run 路由「AI 起草知识」入口 | P6 |
+| 6.3 | 首页指标真实统计 | `GET /api/dashboard/metrics`，P1 起即按真实口径实现 | P1（骨架）/P6（终验） |
+| 6.4 | 执行记录补全（已实施） | 全量复刻（U1~U8 成果为目标态基线） | P3 |
+| 6.5 / 6.5.8 | 用例智能生成闭环 + 编辑升版/查重/AI 徽标 | CaseGenerator、CasePreview、CaseSink、双出口、B1~B3 | P5 |
+| 6.6 | Bug 专项（知识注入 + 6.6.10 风险词表 + B1 兜底增强） | 分析页共享注入 + RiskMerger 词表 | P4/P6 |
+| 6.7 | 日志专项（C1 专属 Schema、C3 附件入检索、C5 SSE 可选默认关、C6 大日志分片、N1~N5 五项补强） | 分析页参数化 Schema + 检索输入扩展 + 模型下拉/门禁/分页/完整度真判定/三方取高 | P4 |
+| 6.8 | SQL 专项（T1~T5：重新分析、来源任务可见、导出 Markdown 等） | reanalyze 端点 + 详情来源行 + 导出 | P4 |
+| 6.9 / 6.9.7 | 回归清单智能生成 + 助手转入 + 必选项口径 + 归档分流 + N1~N6 | 轻量生成端点 + RegressionSink + progress 算法 + 完成记录页签 | P5 |
+| 6.10 / 6.10.7 / 6.10.8 | 报告增强全套（T1~T4、E1~E5 直存、趋势对比） | narrative 端点 + ReportSink + ReportTrend + 数字守卫 | P5 |
+| 6.11 | W1 分析页附件 / W2 知识批量导入 / W3 用例执行批次 | readTextFiles 共享工具 + ImportModal + biz_case_batch | P4 / P2 / P5 |
+| 6.13 / 6.13.7 | 案例验证增强（自建、历史、run-all、知识断言） | ValidationService + 自建案例 UI | P4 |
+| 6.14 / 6.29 | 编排增强（真源消费、保存校验、草稿/门禁/版本包/回滚） | **P4 实现时直接做对真源消费**；草稿态与版本包按 FR-13 目标态实现 | P4 |
+| 6.15 | 首页细节（中文问候、口径修正） | Hero 动态问候 + 资产卡跳转口径 | P6 |
+| 6.16 | Prompt 测试做实（已实施） | 全量复刻 + 6.26 缺口补齐（suite 停用/删除、版本快照、失败样例补跑） | P3 |
+| 6.17 | 执行域 A~E（取消/重试/重跑、命中依据置信度、最近面板、步骤类型与版本、Token） | 取消令牌 + RetryPolicy + rerun 端点 + routeTextRich + 助手页面板 + 步骤类型 + usage | P3 |
+| 6.18 | 发起任务输入域（草稿、路由排除、产物传递、缺项分级门禁） | localStorage 草稿 + 排除交互 + executor 传递 + 阻塞级禁用 | P3 |
+| 6.19 | 识别预检域（面板刷新、附件参与检查、主任务可指定、自动预检） | 防抖自动 preflight + 附件参与 fieldPresent + 主任务选择 | P3 |
+| 6.20 | 执行结果域（耗时、复核终态、引用跳转、风险修正、缺项回显） | RunResult 增强 | P3 |
+| 6.21~6.26 | 六入口交叉增强（词表/判定/变体/数量校验等） | EntryRouteService 词表与 fieldPresent 规则表统一按增强后目标态实现；风险词表入 RiskMerger | P3（词表随引擎）/P6（交叉终验） |
+| 6.27 | 执行记录域（搜索范围、筛选、详情增强、轨迹说明、导出全量） | RunList/RunDetail 目标态 | P3 |
+| 6.28 | 用例库外围（关联 Bug 做实、生成报告带入、完整备份、归档） | biz_case 批量与导出增强 | P5 |
+| 6.30 | 知识库人侧（语义搜索、嵌入状态、影响分析、来源登记） | 人侧 4 端点 + UI；relations 写入方扩展 | P2 |
+| 6.31 | 回归外围（搜索分页、清单编辑、关联 Bug、XLSX 列） | regressions 列表增强 + 条目增删 | P5 |
+| 6.32 | 配置中心 C1~C5 | **P1 实现时直接按补齐后目标态**（模板降级标注、模块编辑、模型删改、PATCH 修复、连接探测降级） | P1 |
+
+### 9.8 实施计划（7 个 Phase）
+
+> 分期原则：每个 Phase 独立可运行、可验收、可回退；优先打通"数据底座 → AI 引擎 → 核心链路 → 外围增强"。估算按单人 + AI 辅助开发的弹性节奏。
+
+| Phase | 内容 | 交付物 | 验收要点 | 预估 |
+| --- | --- | --- | --- | --- |
+| **P0 工程骨架** | backend（SB3 + Maven + Flyway V1/V2 + Actuator）与 frontend（Vue3 + Vite + TS + Pinia + Router + EP）骨架；全局布局（左侧导航 13 项 + 顶栏 + 路由出口）；黄色主题定制；启动脚本 start.bat；`.gitignore`（data/logs 不入库） | 两端可启动互通（Vite 代理 /api → 8080）；首启自动建库 `testpilot_my` 并执行迁移+种子 | 导航可切换 13 个空页面；`java -jar` + dist 托管单端口验证 | 2~3 天 |
+| **P1 配置中心与底座** | sys_module / sys_provider / sys_setting CRUD + KeyStore（AES-GCM）+ 测试连接（/models 探测降级）+ bootstrap 端点 + dashboard/metrics + 对应四个页签 UI；**按 6.32 补齐后目标态**（模块改名、模型删改、PATCH 局部更新、模板纯参考标注） | 配置中心四页签全部可用；Key 保存后重启仍可读；换机语义验证（master.key 缺失 → 明确报错提示重录） | 4 厂商种子在列；停用厂商后分析侧不可选；`has_key` 状态与文件一致 | 3~5 天 |
+| **P2 知识库与检索底座** | kb_knowledge/relation/embedding/retrieval_hit 四表链路：知识 CRUD + 审核门控 + 版本化 + 撤销 409 保护；EmbeddingService（异步重嵌/懒补偿/状态查询）；RetrievalService 三级降级 + HitRecorder；人侧 4 端点（语义搜索/影响分析/嵌入状态/重嵌）；批量导入（6.11 W2）；relations 写入方扩展（6.30 K4） | 知识库页面全功能；发布/升版触发重嵌；撤销被引用知识 → 409 + 依赖清单 | 无 embedding 模型时 keyword 降级命中且黄色提示；无命中显式声明（R6）；导入同题跳过 | 5~8 天 |
+| **P3 AI 测试助手核心链路** | ai 引擎全套（ProviderRegistry/Client/Assembler/Validator/RiskMerger/Budget/EntryRoute 含 6.21~6.26 增强词表）+ workbench 引擎（WorkflowExecutor 串行+取消令牌+重试+产物传递、PromptTestRunner、preflight 富命中）+ wb_run/step/suite/validation 表链路 + 助手页与执行记录页全套 UI（含 6.4/6.16/6.17/6.18/6.19/6.20/6.27 全部增强）+ 沉淀知识出口 | 支付异常示例 walkthrough 全程可走通：识别（命中依据+置信度）→ 执行（串行、耗时、知识引用）→ 复核（勾选强校验、P0 二次确认）→ 沉淀 → 知识库审核发布；取消/重试/重跑可用 | 与原项目 6.1.7 验收标准逐条对齐；7 入口输出 Schema 校验零误伤；180s 预算兜底路径实测 | 8~12 天 |
+| **P4 独立分析与编排、验证** | 独立分析三页（M2 知识注入 + 6.7.5 C1 参数化 Schema + C3 附件入检索 + N1~N5 + 6.8 T1~T5 + 6.11 W1 附件）+ 工作台编排页（真源消费 + 6.14/6.29 增强：校验/草稿/版本包/恢复默认）+ 案例验证页（6.13/6.13.7：自建/历史/run-all/知识断言） | 三分析页与助手同享注入与门禁体系；编排修改触发词/必填**立即影响** preflight 与执行；验证案例断言含知识与规则 | Bug 页注入知识引用卡片；模型选择下拉生效；风险三方取高；案例验证 run-all 全绿 | 6~10 天 |
+| **P5 资产域（用例/回归/报告）** | 用例库（CRUD/升版/批量/批次子系统 6.11 W3 + 6.5 智能生成双模式 + 6.5.8 B1~B3 + 6.28 外围）+ 回归（6.9/6.9.7 全套 + 6.31）+ 报告（6.10/6.10.7/6.10.8/6.25 G2~G5 全套）+ 三个轻量生成端点 + 三个 Sink 弹窗 + 助手四出口全通 | AI 用例生成 → 预览编辑勾选 → 入库（查重提示/AI 徽标/_meta 溯源）；回归生成（规则保底 ≥6 + AI 增强）→ 执行 → 必选项归档；报告（项目下拉/来源三类/AI 叙述/数字守卫/直存/趋势对比） | 各域 walkthrough 验收（对齐 6.5.6/6.9.5/6.10.5 测试计划）；`statsAvailable=false` 显"—" | 8~12 天 |
+| **P6 闭环与全局收口** | AI 起草知识闭环（6.2 M5/6.12：查重→起草→待审核）+ 首页细节（6.15 中文问候/口径）+ 6.21~6.26 交叉专项终验（词表/变体/数量校验矩阵用例化）+ 全局验收 + 文档回写 | 全部 6.x 方案落地完成；首页六指标与种子基线一致（对齐 6.3.5 数值口径按新种子重算） | 按本文档 9.7.2 逐行勾验；7.2 已知行为对应能力在新项目全部可用 | 4~6 天 |
+
+**总计约 36~56 人日**（弹性 6~10 周）。里程碑对齐关系：P2 ≈ 原 M1；P3 ≈ 原 M3 + 执行域增强；P4 ≈ 原 M2；P5 ≈ 原 M4；P6 ≈ 原 M5 + 收口。
+
+#### 9.8.1 测试策略
+
+| 层 | 工具 | 覆盖点（对齐 6.2.6 测试策略） |
+| --- | --- | --- |
+| 后端单测 | JUnit 5 + Mockito | 余弦计算、float[] BLOB 序列化 roundtrip、三级降级链、风险合并取高、Schema 校验（含 object[] 第 N 条定位）、compareVersion 版本语义、触发词词表矩阵（6.21~6.26 变体用例）、Prompt 5 规则判定 |
+| 后端集成 | Spring Boot Test + 本地 MySQL（`testpilot_my_test` 独立测试库） | Flyway 迁移链、API 冒烟（400/409/502 矩阵：无模型阻断、撤销保护、重复转入、全部失败不落库）、执行链路容错三路径 |
+| 前端 | vue-tsc 类型检查 + vitest（可选，纯函数） | 表单校验、草稿恢复、分页参数白名单 |
+| 真机回归 | 人工 walkthrough | 每个 Phase 验收列执行；支付异常示例 / Prompt 测试示例两条固定链路全流程 |
+
+#### 9.8.2 工程规范
+
+- **后端**：Controller 只做参数校验与委托（无业务逻辑）；Service 事务边界（`@Transactional` 仅写操作）；DTO 用 record；统一 `ApiResult<T>` 响应与全局异常处理（业务异常带 code，如 409 引用保护）；日志用 SLF4J（**Key 与快照不打日志**，R4）。
+- **前端**：ESLint + Prettier；组件 `PascalCase`、组合式 API 统一 `<script setup lang="ts">`；API 层按资源分文件（对齐后端分组）。
+- **Git**：`main` 受保护；功能分支 `feat/phase3-assistant` 等命名；提交信息 `feat|fix|docs|chore: 简述`。
+- **Flyway 纪律**：已合并迁移不可变；新变更一律新版本号 `V{n}__desc.sql`；开发库数据优先、禁止删库重置（种子仅首装写入）。
+
+### 9.9 环境要求
+
+| 项 | 要求 | 说明 |
+| --- | --- | --- |
+| JDK | 21 LTS | `JAVA_HOME` 配置；脚本启动时校验版本 |
+| Maven | 3.9+（或仅用内置 mvnw wrapper，免安装） | 国内可配置阿里镜像加速 |
+| Node.js | 20 LTS 或 22 LTS（含 npm） | 仅前端构建需要；生产运行不需要 |
+| MySQL | 8.x 本机服务 | 默认 `127.0.0.1:3306`（root/空密码），环境变量 `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` 覆盖（对齐原项目口径）；首启自动建库 `testpilot_my` |
+| 浏览器 | Edge / Chrome 等现代浏览器 | 长请求（执行最长约 3 分钟）期间勿关闭页面 |
+
+启动方式（对齐原项目一键体验）：
+
+| 方式 | 操作 |
+| --- | --- |
+| Windows 一键启动 | 双击 `scripts/start.bat`（检查 JDK/MySQL/Node → 构建前后端 → 启动 → 打开浏览器 `http://127.0.0.1:8080`） |
+| 开发模式 | backend：`mvn spring-boot:run`；frontend：`npm run dev`（5173 端口，代理 /api） |
+| 离线生产启动 | `java -jar backend/target/testpilot-my.jar`（已内置前端 dist，单端口） |
+
+数据与安全（对齐原 3.3 语义）：`data/keys`（主密钥 + 厂商 Key 密文）与 `data/backups`（导出 JSON）随项目保留、不入 git、**不随分发包分发**；换机后需重新录入大模型 Key；数据库备份用 `mysqldump testpilot_my`。
+
+### 9.10 关键决策记录与风险清单
+
+#### 9.10.1 决策记录（D1~D14）
+
+| # | 决策 | 理由 / 备选与否决原因 |
+| --- | --- | --- |
+| D1 | 功能范围一步到位（已实现 + 全部未实施方案） | 使用者 2026-10-04 确认；以 9.7.2 映射表为验收清单 |
+| D2 | Spring Boot 单体分包，不拆微服务 | 本地单人工具、无并发队列需求（原 6.17.6 取舍沿用） |
+| D3 | Flyway 管理 DDL 与种子，替代启动建表 | 迁移可追溯、不可变；废弃 `information_schema` 补列模式 |
+| D4 | BIGINT 自增主键 + 业务编号列 + 显式溯源列 | 消除 `LIKE 'runId#%'` 前缀模糊查询；溯源关系见 9.4.3 |
+| D5 | JSON 快照用 LONGTEXT（不用 MySQL JSON 类型） | R5 快照保真：JSON 类型会规范化键序与空白 |
+| D6 | API Key：AES-256-GCM 文件加密（master.key 本机私有） | Java 无原生 DPAPI；换机失效语义与原项目一致；备选 Jasypt（口令派生，换机可解但需口令——否决，弱化"本机绑定"语义） |
+| D7 | 同步一次性落库，不引入轮询（沿用原决策） | 远期升级触发条件沿用 6.4.2 记录；SSE 流式为可选项默认关（6.7.5 C5） |
+| D8 | PDF 导出采用浏览器打印方案（打印样式表 + window.print） | jsPDF 中文字体需嵌入大体积字体文件；浏览器自带中文渲染零依赖；Markdown 为权威导出格式 |
+| D9 | 前端正式路由化（Vue Router） | 对比原 `setPage` 为架构正规化；URL 可分享/收藏/刷新保持 |
+| D10 | 生产形态：Spring Boot 托管前端静态资源，单端口 8080 | 对齐原项目"单端口单进程"体验；运维简单 |
+| D11 | 向量检索保持 BLOB + 应用层余弦，不引入向量库 | 沿用 6.2 已确认决策；千级知识规模无性能压力 |
+| D12 | 不引入 Spring AI，自研 OpenAI 兼容客户端 | purpose 隔离、chatRaw 真运行、超时钳制、重试策略等定制点与原链路一一对应，自研可控 |
+| D13 | 取消机制用执行令牌 + 取消端点（非连接断开检测） | Servlet 容器下断连检测不可靠；语义与 6.17 D-17-2 一致（取消即丢弃不落库） |
+| D14 | 原项目"演示级/占位行为"不复刻，直接实现目标态 | 见 9.1.2"按补丁后目标态一次实现"原则 |
+
+#### 9.10.2 风险与缓解
+
+| 风险 | 影响 | 缓解 |
+| --- | --- | --- |
+| 交付体量大（30 个方案承接，36~56 人日） | 周期拉长、中途弃坑 | 7 个 Phase 独立可交付；P3 完成即达到"核心可用"里程碑，P4~P6 为增量增强 |
+| 长请求 180s 超时链路（Tomcat/axios/浏览器） | 执行被中途掐断 | P0 即配置并实测全链路超时（Tomcat connectionTimeout/async timeout ≥ 210s、axios 200s）；单路由超时钳制 30s 控制上界 |
+| embedding 厂商无兼容端点（如 DeepSeek 无 embeddings） | semantic 检索不可用 | purpose 隔离 + keyword 降级链路为一级公民（黄色提示不伪造，R6）；P2 验收强制覆盖降级路径 |
+| MyBatis-Plus JSON TypeHandler 与 LONGTEXT 映射 | 实体/快照读写不一致 | 统一 JacksonTypeHandler 封装 + 序列化 roundtrip 单测；快照字段只读写不查询（查询走显式列） |
+| 中文 PDF 打印样式兼容性 | 导出观感差异 | 打印专用 CSS（@media print）+ Markdown 权威导出双轨；P5 验收含打印实测 |
+| 触发词词表增强（6.21~6.26）回归面广 | 改词表引发误命中/漏命中 | 词表矩阵单测 + 案例验证页（run-all）作为路由回归沙箱——这正是原项目 FR-12 的设计初衷 |
+| Flyway 种子与多环境（dev/test 双库） | 测试污染开发数据 | 测试库 `testpilot_my_test` 独立；种子仅在空库首装执行 |
+
+#### 9.10.3 实施记录（随开发回写）
+
+| 日期 | Phase | 记录 |
+| --- | --- | --- |
+| （待实施） | — | 本方案于 2026-10-04 定稿；开发启动后在此登记各 Phase 实际交付与偏差 |
+
+---
+
+*文档完 · TestPilot v1.0.0（第 1~8 章，原项目综合说明）+ TestPilot-my 重新开发方案（第 9 章，2026-10-04 追加）· 整合自 README.md 与 design/、docs/ 目录原始文档（原文档已删除，本文档为唯一保留版本）*
