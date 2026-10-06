@@ -1,0 +1,4 @@
+# 本地数据库密码配置（此文件不提交到代码库，见 .gitignore）
+spring:
+  datasource:
+    password: pp2024

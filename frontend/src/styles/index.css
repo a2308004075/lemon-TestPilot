@@ -1,0 +1,138 @@
+:root {
+  --tp-primary: #f7c948;
+  --tp-primary-dark: #e6b422;
+  --tp-primary-light: #fdf3d7;
+  --tp-sidebar-bg: #263238;
+  --tp-sidebar-active: #f7c948;
+  --tp-p0: #f56c6c;
+  --tp-p1: #e6a23c;
+  --tp-p2: #909399;
+  --tp-pass: #67c23a;
+  --tp-block: #f56c6c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  background: #f5f6f8;
+  color: #303133;
+}
+
+#app {
+  height: 100%;
+}
+
+/* 黄色主按钮 */
+.tp-btn-primary {
+  background: var(--tp-primary) !important;
+  border-color: var(--tp-primary-dark) !important;
+  color: #4a3800 !important;
+  font-weight: 600;
+}
+
+.tp-btn-primary:hover {
+  background: var(--tp-primary-dark) !important;
+}
+
+/* 页面通用 */
+.page {
+  padding: 16px;
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.page-desc {
+  color: #909399;
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
+/* 风险徽章 */
+.tp-risk {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.tp-risk-P0 {
+  background: #fde2e2;
+  color: var(--tp-p0);
+}
+
+.tp-risk-P1 {
+  background: var(--tp-primary-light);
+  color: #b17b00;
+}
+
+.tp-risk-P2 {
+  background: #e9e9eb;
+  color: var(--tp-p2);
+}
+
+/* 状态徽章 */
+.tp-status {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.tp-status-ok { background: #e1f3d8; color: var(--tp-pass); }
+.tp-status-warn { background: var(--tp-primary-light); color: #b17b00; }
+.tp-status-block { background: #fde2e2; color: var(--tp-block); }
+.tp-status-info { background: #e9e9eb; color: var(--tp-p2); }
+
+/* JSON 输出块 */
+.tp-json {
+  background: #2d3239;
+  color: #d6e4ff;
+  border-radius: 6px;
+  padding: 12px;
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+}
+
+/* 卡片标题 */
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c8c9cc;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
