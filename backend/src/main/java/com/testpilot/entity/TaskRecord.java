@@ -55,6 +55,10 @@ public class TaskRecord extends TimestampedEntity {
     @Column(name = "review_status")
     private String reviewStatus;
 
+    /** 未入库 / 待审核 / 已入库 */
+    @Column(name = "knowledge_status")
+    private String knowledgeStatus;
+
     @Column(name = "completeness")
     private Integer completeness;
 

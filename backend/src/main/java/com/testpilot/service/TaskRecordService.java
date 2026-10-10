@@ -5,6 +5,7 @@ import com.testpilot.common.JsonUtil;
 import com.testpilot.engine.CompletenessChecker;
 import com.testpilot.engine.TaskExecutor;
 import com.testpilot.engine.TaskTypes;
+import com.testpilot.entity.KbItem;
 import com.testpilot.entity.TaskRecord;
 import com.testpilot.repository.TaskRecordRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,10 @@ public class TaskRecordService {
     private TaskRecordRepository taskRepo;
     @Autowired
     private TaskExecutor executor;
+    @Autowired
+    private KbService kbService;
+    @Autowired
+    private AuditService auditService;
 
     public Map<String, Object> list(String taskType, String keyword) {
         List<TaskRecord> all = taskType == null || taskType.isEmpty()
@@ -77,11 +82,16 @@ public class TaskRecordService {
         List<String> missing = (List<String>) analyzed.get("missing");
         task.setStatus(missing == null || missing.isEmpty() ? "已完成" : "待补充");
         task.setReviewStatus("待复核");
+        task.setKnowledgeStatus("未入库");
         task.setCompleteness((Integer) analyzed.get("completeness"));
         task.setOutputJson(JsonUtil.write(analyzed.get("output")));
         task.setEngineMode((String) analyzed.get("engineMode"));
         task.setSource("manual");
-        return taskRepo.save(task);
+        TaskRecord saved = taskRepo.save(task);
+        auditService.record("task", saved.getTaskNo(), "创建任务",
+                TaskTypes.nameOf(taskType) + " · 引擎 " + saved.getEngineMode()
+                        + " · 完整度 " + saved.getCompleteness() + "%");
+        return saved;
     }
 
     public Map<String, Object> detail(Long id) {
@@ -105,7 +115,30 @@ public class TaskRecordService {
         } else {
             throw new BizException("无效的复核动作：" + action);
         }
-        return taskRepo.save(task);
+        TaskRecord saved = taskRepo.save(task);
+        auditService.record("task", saved.getTaskNo(),
+                "approve".equals(action) ? "复核通过" : "驳回补充",
+                note == null || note.isEmpty() ? "" : note);
+        return saved;
+    }
+
+    /** 申请入知识库：复核通过的分析结论沉淀为待审核知识 */
+    public TaskRecord toKnowledge(Long id) {
+        TaskRecord task = taskRepo.findById(id)
+                .orElseThrow(() -> new BizException("任务不存在：" + id));
+        if (!"通过".equals(task.getReviewStatus())) {
+            throw new BizException("任务尚未通过人工复核，不能申请入知识库");
+        }
+        String knowledgeStatus = task.getKnowledgeStatus() == null ? "未入库" : task.getKnowledgeStatus();
+        if (!"未入库".equals(knowledgeStatus)) {
+            throw new BizException("任务已发起知识入库（当前状态：" + knowledgeStatus + "）");
+        }
+        KbItem kb = kbService.createFromTask(task);
+        task.setKnowledgeStatus("待审核");
+        TaskRecord saved = taskRepo.save(task);
+        auditService.record("task", saved.getTaskNo(), "申请入知识库",
+                "生成待审核知识 " + kb.getKbNo() + " · " + kb.getCategory());
+        return saved;
     }
 
     /** 输入完整度实时检查（新建分析页右侧面板） */

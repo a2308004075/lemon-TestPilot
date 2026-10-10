@@ -1,206 +1,219 @@
 <template>
   <div class="page">
-    <h2 class="page-title">知识库</h2>
-    <p class="page-desc">七分类经验资产：分析结论入库需审核后发布；引用计数公开可见，被引用的知识撤销入库将被阻止。</p>
+    <!-- 页头 -->
+    <div class="page-intro">
+      <div>
+        <h2>知识库</h2>
+        <p>点击任意记录查看正文、版本、来源、审核和引用关系。</p>
+      </div>
+      <div class="page-actions">
+        <button class="button" @click="importPlaceholder"><Upload /> 批量导入</button>
+        <button class="button primary" @click="openCreate"><Plus /> 新增知识</button>
+      </div>
+    </div>
 
-    <!-- 4 统计卡 -->
-    <el-row :gutter="12" class="mb12">
-      <el-col :span="6">
-        <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.effective || 0 }}</div>
-          <div class="stat-name">有效知识（已发布）</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.pendingReview || 0 }}</div>
-          <div class="stat-name">待审核</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.categoryCoverage || '0/7' }}</div>
-          <div class="stat-name">分类覆盖</div>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ stats.total || 0 }}</div>
-          <div class="stat-name">知识总量</div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <!-- 统计卡 -->
+    <div class="metric-grid four" style="margin-top: 4px">
+      <div class="metric yellow"><span>有效知识</span><strong>{{ stats.effective || 0 }}</strong></div>
+      <div class="metric warn"><span>待审核</span><strong>{{ stats.pendingReview || 0 }}</strong></div>
+      <div class="metric blue"><span>分类覆盖</span><strong>{{ stats.categoryCoverage || '0/7' }}</strong></div>
+      <div class="metric"><span>知识总量</span><strong>{{ stats.total || 0 }}</strong></div>
+    </div>
 
     <!-- 筛选 -->
-    <el-card shadow="never" class="mb12">
-      <div class="search-bar">
-        <el-input v-model="query.keyword" placeholder="搜索标题 / 正文" clearable style="width: 220px"
-                  @keyup.enter="load" @clear="load" />
-        <el-select v-model="query.category" placeholder="分类" clearable style="width: 150px" @change="load">
-          <el-option v-for="c in categories" :key="c" :label="c" :value="c" />
-        </el-select>
-        <el-select v-model="query.status" placeholder="状态" clearable style="width: 130px" @change="load">
-          <el-option v-for="s in ['待审核', '已发布', '已驳回', '已撤销']" :key="s" :label="s" :value="s" />
-        </el-select>
-        <div class="spacer" />
-        <el-button type="warning" class="tp-btn-primary" @click="load">查询</el-button>
-        <el-button type="warning" plain @click="openCreate">新增知识</el-button>
+    <div class="filterbar" style="margin-top: 18px">
+      <div class="search">
+        <Search />
+        <input v-model="query.keyword" placeholder="搜索标题、正文和分类" @keyup.enter="search" />
       </div>
-    </el-card>
+      <select v-model="query.category" @change="search">
+        <option value="">全部分类</option>
+        <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
+      </select>
+      <select v-model="query.status" @change="search">
+        <option value="">全部状态</option>
+        <option v-for="s in ['待审核', '已发布', '已驳回', '已撤销']" :key="s" :value="s">{{ s }}</option>
+      </select>
+      <select v-model="query.moduleName" @change="search">
+        <option value="">全部模块</option>
+        <option v-for="m in moduleNames" :key="m" :value="m">{{ m }}</option>
+      </select>
+    </div>
 
     <!-- 列表 -->
-    <el-card shadow="never">
-      <el-table :data="rows" stripe v-loading="loading">
-        <el-table-column prop="kbNo" label="编号" width="95" />
-        <el-table-column prop="title" label="知识标题" min-width="220" show-overflow-tooltip />
-        <el-table-column prop="category" label="分类" width="110" />
-        <el-table-column label="模块" min-width="150">
-          <template #default="{ row }">
-            {{ [row.moduleName, row.submoduleName].filter(Boolean).join(' / ') || '通用' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="风险" width="70" align="center">
-          <template #default="{ row }">
-            <span class="tp-risk" :class="'tp-risk-' + row.risk">{{ row.risk }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="版本" width="70" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" effect="plain">v{{ row.version }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <span class="tp-status" :class="statusClass(row.status)">{{ row.status }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="被引用" width="85" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.refCount" size="small" type="warning">{{ row.refCount }} 次</el-tag>
-            <span v-else>0</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="sourceTask" label="来源" min-width="120" show-overflow-tooltip />
-        <el-table-column label="操作" width="170" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
-            <el-button v-if="row.status === '待审核'" link type="success" size="small" @click="review(row, 'approve')">通过</el-button>
-            <el-button v-if="row.status === '待审核'" link type="danger" size="small" @click="review(row, 'reject')">驳回</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+    <div class="panel table-panel" style="margin-top: 14px">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>知识标题</th><th>分类</th><th>模块</th><th>风险</th><th>版本</th><th>状态</th><th>更新时间</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="k in pagedRows" :key="k.id" @click="openDetail(k)">
+              <td><strong>{{ k.title }}</strong><small>{{ k.kbNo }}</small></td>
+              <td>{{ k.category }}</td>
+              <td>{{ [k.moduleName, k.submoduleName].filter(Boolean).join(' / ') || '通用' }}</td>
+              <td><Badge :value="k.risk" /></td>
+              <td><span class="wb-id">v{{ k.version }}</span></td>
+              <td><Badge :value="k.status" /></td>
+              <td>{{ fmtDate(k.updatedAt) }}</td>
+              <td><button class="text-button" @click.stop="openDetail(k)">查看 <ChevronRight /></button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <Empty v-if="!loading && !pagedRows.length" title="暂无知识条目" desc="新增知识或从分析任务申请入库" />
+      <TPagination v-if="allRows.length" v-model:page="page" v-model:page-size="pageSize" :total="allRows.length" />
+    </div>
 
     <!-- 新增弹窗 -->
-    <el-dialog v-model="createVisible" title="新增知识（提交审核）" width="620px" destroy-on-close>
-      <el-form :model="form" label-width="90px">
-        <el-form-item label="知识标题" required>
-          <el-input v-model="form.title" placeholder="如：支付状态同步链路排查手册" />
-        </el-form-item>
-        <el-row :gutter="10">
-          <el-col :span="8">
-            <el-form-item label="分类">
-              <el-select v-model="form.category" style="width: 100%">
-                <el-option v-for="c in categories" :key="c" :label="c" :value="c" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="风险">
-              <el-select v-model="form.risk" style="width: 100%">
-                <el-option v-for="p in ['P0', 'P1', 'P2']" :key="p" :label="p" :value="p" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="10">
-          <el-col :span="8">
-            <el-form-item label="项目">
-              <el-input v-model="form.projectName" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="模块">
-              <el-input v-model="form.moduleName" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="子模块">
-              <el-input v-model="form.submoduleName" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="知识正文" required>
-          <el-input v-model="form.body" type="textarea" :rows="8"
-                    placeholder="背景 / 现象 / 排查过程 / 根因 / 解法 / 预防措施。事实留在知识库，请勿编造编号与引用。" />
-        </el-form-item>
-      </el-form>
+    <TModal v-if="createVisible" title="新增知识" :width="620" @close="createVisible = false">
+      <div class="field">
+        <span>知识标题<em>*</em></span>
+        <input v-model="form.title" placeholder="如：支付状态同步链路排查手册" />
+      </div>
+      <div class="inline-grid">
+        <div class="field">
+          <span>知识分类</span>
+          <select v-model="form.category">
+            <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
+          </select>
+        </div>
+        <div class="field">
+          <span>风险</span>
+          <select v-model="form.risk">
+            <option v-for="p in ['P0', 'P1', 'P2']" :key="p" :value="p">{{ p }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <span>所属模块</span>
+        <select v-model="form.modulePath">
+          <option value="">通用（不挂模块）</option>
+          <option v-for="o in moduleOptions" :key="o.value" :value="o.value">{{ o.value }}</option>
+        </select>
+      </div>
+      <div class="field">
+        <span>知识正文<em>*</em></span>
+        <textarea v-model="form.body" style="min-height: 180px"
+                  placeholder="背景 / 现象 / 排查过程 / 根因 / 解法 / 预防措施。事实留在知识库，请勿编造编号与引用。"></textarea>
+      </div>
       <template #footer>
-        <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="warning" class="tp-btn-primary" @click="save">提交审核</el-button>
+        <button class="button" @click="createVisible = false">取消</button>
+        <button class="button primary" :disabled="saving" @click="save">保存并提交审核</button>
       </template>
-    </el-dialog>
+    </TModal>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="detailVisible" size="52%" :title="detail ? detail.kb.kbNo + ' · ' + detail.kb.title : ''">
-      <template v-if="detail">
-        <el-descriptions :column="3" border size="small" class="mb12">
-          <el-descriptions-item label="分类">{{ detail.kb.category }}</el-descriptions-item>
-          <el-descriptions-item label="风险">
-            <span class="tp-risk" :class="'tp-risk-' + detail.kb.risk">{{ detail.kb.risk }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="版本">v{{ detail.kb.version }}</el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <span class="tp-status" :class="statusClass(detail.kb.status)">{{ detail.kb.status }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="被引用">{{ detail.kb.refCount }} 次</el-descriptions-item>
-          <el-descriptions-item label="来源">{{ detail.kb.sourceTask }}</el-descriptions-item>
-          <el-descriptions-item label="模块" :span="3">
-            {{ [detail.kb.projectName, detail.kb.moduleName, detail.kb.submoduleName].filter(Boolean).join(' / ') || '通用' }}
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <h4>知识正文</h4>
-        <p class="detail-text pre">{{ detail.kb.body }}</p>
-
-        <h4>引用关系</h4>
-        <ul v-if="detail.related.length" class="related-list">
+    <TDrawer v-if="detailVisible && detail" eyebrow="DETAIL VIEW" :title="detail.kb.title"
+             :subtitle="detail.kb.kbNo" @close="detailVisible = false">
+      <div class="detail-badges">
+        <span class="badge">{{ detail.kb.category }}</span>
+        <Badge :value="detail.kb.risk" />
+        <Badge :value="detail.kb.status" />
+        <span class="wb-id">v{{ detail.kb.version }}</span>
+      </div>
+      <div class="detail-grid">
+        <div><span>所属模块</span><strong>{{ moduleText(detail.kb) || '通用' }}</strong></div>
+        <div><span>来源任务</span><strong>{{ detail.kb.sourceTask || '—' }}</strong></div>
+        <div><span>更新时间</span><strong>{{ fmtSlash(detail.kb.updatedAt) }}</strong></div>
+        <div>
+          <span>引用次数</span>
+          <strong>{{ detail.kb.refCount }}（撤销将被阻止）</strong>
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>关联影响</h3>
+        <ul v-if="detail.related.length">
           <li v-for="(r, i) in detail.related" :key="i">{{ r }}</li>
         </ul>
-        <p v-else class="detail-text">暂无引用</p>
-
-        <div class="detail-actions">
-          <el-button v-if="detail.kb.status === '待审核'" type="success" plain @click="review(detail.kb, 'approve')">审核通过</el-button>
-          <el-button v-if="detail.kb.status === '待审核'" type="danger" plain @click="review(detail.kb, 'reject')">驳回</el-button>
-          <el-button v-if="detail.kb.status === '已发布'" @click="revoke(detail.kb)">撤销入库</el-button>
+        <p v-else>暂无引用</p>
+      </div>
+      <div class="detail-section">
+        <h3>知识正文</h3>
+        <pre>{{ detail.kb.body }}</pre>
+      </div>
+      <div class="detail-section">
+        <h3>审核信息</h3>
+        <p>{{ detail.kb.reviewNote || '暂无审核备注' }}</p>
+      </div>
+      <div class="drawer-actions">
+        <template v-if="detail.kb.status === '待审核'">
+          <button class="button" @click="review(detail.kb, 'reject')">驳回</button>
+          <button class="button primary" @click="review(detail.kb, 'approve')">审核通过并发布</button>
+        </template>
+        <template v-if="detail.kb.status === '已发布'">
+          <button class="button" @click="editKb(detail.kb)">编辑内容</button>
+          <button class="button danger" @click="revoke(detail.kb)"><RotateCcw />撤销入库</button>
+        </template>
+      </div>
+      <div class="detail-section">
+        <h3>操作记录</h3>
+        <div v-if="audits.length" class="timeline">
+          <div v-for="a in audits" :key="a.id">
+            <i></i>
+            <span>
+              <strong>{{ a.action }}</strong>
+              <small>{{ fmtTime(a.createdAt) }}{{ a.detail ? ' · ' + a.detail : '' }}</small>
+            </span>
+          </div>
         </div>
-      </template>
-    </el-drawer>
+        <p v-else style="font-size: 12px; color: var(--muted)">暂无操作记录</p>
+      </div>
+    </TDrawer>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { apiKbList, apiKbStats, apiKbCategories, apiKbDetail, apiKbCreate, apiKbReview, apiKbRevoke } from '../api'
+import { Plus, Upload, Search, ChevronRight, RotateCcw } from 'lucide-vue-next'
+import {
+  apiKbList, apiKbStats, apiKbCategories, apiKbDetail, apiKbCreate, apiKbReview, apiKbRevoke,
+  apiAudit, apiCaseModules
+} from '../api'
+import { fmtTime, fmtDate, fmtSlash } from '../utils/format'
+import Badge from '../components/ui/Badge.vue'
+import Empty from '../components/ui/Empty.vue'
+import TDrawer from '../components/ui/TDrawer.vue'
+import TModal from '../components/ui/TModal.vue'
+import TPagination from '../components/ui/TPagination.vue'
 
 const query = ref({ keyword: '', category: '', status: '', moduleName: '' })
-const rows = ref([])
+const allRows = ref([])
 const stats = ref({})
 const categories = ref([])
+const moduleNames = ref([])
+const moduleOptions = ref([])
 const loading = ref(false)
+const page = ref(1)
+const pageSize = ref(20)
+
 const createVisible = ref(false)
+const saving = ref(false)
 const form = ref({})
 const detailVisible = ref(false)
 const detail = ref(null)
+const audits = ref([])
 
-const statusClass = (s) => s === '已发布' ? 'tp-status-ok' : s === '已撤销' || s === '已驳回' ? 'tp-status-block' : 'tp-status-warn'
+const pagedRows = computed(() => allRows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
+
+const moduleText = (k) => [k.projectName, k.moduleName, k.submoduleName].filter(Boolean).join(' / ')
+
+const search = () => {
+  page.value = 1
+  load()
+}
 
 const load = async () => {
   loading.value = true
   try {
     const data = await apiKbList(query.value)
-    rows.value = data.list || []
+    allRows.value = data.list || []
+    if ((page.value - 1) * pageSize.value >= allRows.value.length) {
+      page.value = 1
+    }
   } finally {
     loading.value = false
   }
@@ -210,10 +223,14 @@ const loadStats = async () => {
   stats.value = await apiKbStats()
 }
 
+const importPlaceholder = () => {
+  ElMessage.info('批量导入将在后续版本提供')
+}
+
 const openCreate = () => {
   form.value = {
-    title: '', category: '业务规则库', risk: 'P1',
-    projectName: '电商平台', moduleName: '', submoduleName: '', body: ''
+    title: '', category: categories.value[0] || '业务规则库', risk: 'P1',
+    modulePath: moduleOptions.value[0]?.value || '', body: ''
   }
   createVisible.value = true
 }
@@ -223,16 +240,34 @@ const save = async () => {
     ElMessage.warning('请填写标题与正文')
     return
   }
-  await apiKbCreate(form.value)
-  ElMessage.success('已提交审核')
-  createVisible.value = false
-  await load()
-  await loadStats()
+  saving.value = true
+  try {
+    const payload = {
+      title: form.value.title,
+      category: form.value.category,
+      risk: form.value.risk,
+      body: form.value.body
+    }
+    if (form.value.modulePath) {
+      const [projectName, moduleName, submoduleName] = form.value.modulePath.split(' / ')
+      payload.projectName = projectName
+      payload.moduleName = moduleName || ''
+      payload.submoduleName = submoduleName || ''
+    }
+    await apiKbCreate(payload)
+    ElMessage.success('已提交审核')
+    createVisible.value = false
+    await load()
+    await loadStats()
+  } finally {
+    saving.value = false
+  }
 }
 
 const openDetail = async (row) => {
   detail.value = await apiKbDetail(row.id)
   detailVisible.value = true
+  audits.value = await apiAudit({ entityType: 'kb', entityNo: detail.value.kb.kbNo })
 }
 
 const review = async (kb, action) => {
@@ -255,67 +290,27 @@ const revoke = async (kb) => {
   }
 }
 
+const editKb = (kb) => {
+  ElMessage.info('知识编辑将在后续版本提供，可撤销后重新入库')
+}
+
 onMounted(async () => {
   categories.value = await apiKbCategories()
+  const mods = await apiCaseModules()
+  const names = new Set()
+  const options = []
+  const seen = new Set()
+  for (const m of mods || []) {
+    if (m.module) names.add(m.module)
+    const label = [m.project, m.module, m.submodule].filter(Boolean).join(' / ')
+    if (!seen.has(label)) {
+      seen.add(label)
+      options.push({ value: label, label })
+    }
+  }
+  moduleNames.value = [...names].sort()
+  moduleOptions.value = options
   await load()
   await loadStats()
 })
 </script>
-
-<style scoped>
-.mb12 {
-  margin-bottom: 12px;
-}
-
-.stat-card {
-  text-align: center;
-  border-top: 3px solid var(--tp-primary);
-}
-
-.stat-value {
-  font-size: 26px;
-  font-weight: 700;
-}
-
-.stat-name {
-  color: #909399;
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-.search-bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.detail-text {
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.7;
-  background: #fafafa;
-  border-radius: 6px;
-  padding: 10px 12px;
-}
-
-.detail-text.pre {
-  white-space: pre-line;
-}
-
-.related-list {
-  padding-left: 18px;
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.9;
-}
-
-.detail-actions {
-  margin-top: 16px;
-  display: flex;
-  gap: 8px;
-}
-</style>

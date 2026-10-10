@@ -29,6 +29,8 @@ public class CaseService {
     private SysModuleRepository moduleRepo;
     @Autowired
     private RuleBasedAnalyzer ruleAnalyzer;
+    @Autowired
+    private AuditService auditService;
 
     public Map<String, Object> list(String keyword, String moduleName, String submoduleName,
                                     String priority, String status, int page, int size) {
@@ -148,7 +150,10 @@ public class CaseService {
         c.setStatus("未执行");
         c.setVersion(1);
         c.setCreatedDate(LocalDate.now());
-        return caseRepo.save(c);
+        TestCase saved = caseRepo.save(c);
+        auditService.record("case", saved.getCaseNo(), "新增用例",
+                saved.getTitle() + " · " + saved.getPriority());
+        return saved;
     }
 
     public TestCase detail(Long id) {
@@ -161,7 +166,10 @@ public class CaseService {
         TestCase c = detail(id);
         applyFields(c, body);
         c.setVersion(c.getVersion() + 1);
-        return caseRepo.save(c);
+        TestCase saved = caseRepo.save(c);
+        auditService.record("case", saved.getCaseNo(), "编辑升版",
+                "v" + saved.getVersion() + " · " + saved.getTitle());
+        return saved;
     }
 
     /** 复制用例 */
@@ -183,7 +191,10 @@ public class CaseService {
         c.setVersion(1);
         c.setLinkedBugNo(src.getLinkedBugNo());
         c.setCreatedDate(LocalDate.now());
-        return caseRepo.save(c);
+        TestCase saved = caseRepo.save(c);
+        auditService.record("case", saved.getCaseNo(), "复制用例",
+                "来自 " + src.getCaseNo() + " · " + saved.getTitle());
+        return saved;
     }
 
     /** 智能生成用例草稿（不落库，逐条确认后保存） */

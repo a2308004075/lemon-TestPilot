@@ -1,6 +1,7 @@
 .idea
 backend/target
 backend/boot.log
+backend/data
 frontend/dist
 frontend/node_modules
 frontend/dev.log

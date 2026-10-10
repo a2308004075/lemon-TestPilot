@@ -1,233 +1,198 @@
-<template>
-  <div class="page">
-    <h2 class="page-title">执行记录</h2>
-    <p class="page-desc">AI 助手每次完整执行的记录：路由任务快照、步骤明细与人工复核。</p>
-
-    <!-- 搜索栏 -->
-    <el-card shadow="never" class="mb12">
-      <div class="search-bar">
-        <el-input v-model="query.keyword" placeholder="搜索标题 / 输入材料" clearable style="width: 280px"
-                  @keyup.enter="load" @clear="load" />
-        <el-select v-model="query.status" placeholder="状态" clearable style="width: 140px" @change="load">
-          <el-option label="已完成" value="已完成" />
-          <el-option label="待补充" value="待补充" />
-        </el-select>
-        <el-button type="warning" class="tp-btn-primary" @click="load">查询</el-button>
-      </div>
-    </el-card>
-
-    <!-- 列表 -->
-    <el-card shadow="never">
-      <el-table :data="rows" stripe v-loading="loading">
-        <el-table-column prop="runNo" label="执行编号" width="140" />
-        <el-table-column prop="title" label="标题" min-width="280" show-overflow-tooltip />
-        <el-table-column label="主任务" width="110">
-          <template #default="{ row }">{{ taskName(row.mainTask) }}</template>
-        </el-table-column>
-        <el-table-column label="路由" width="70" align="center">
-          <template #default="{ row }">{{ row.routeCount }}</template>
-        </el-table-column>
-        <el-table-column label="步骤" width="70" align="center">
-          <template #default="{ row }">{{ row.stepCount }}</template>
-        </el-table-column>
-        <el-table-column label="风险" width="70" align="center">
-          <template #default="{ row }">
-            <span class="tp-risk" :class="'tp-risk-' + row.risk">{{ row.risk }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="缺项" width="70" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.missingCount" size="small" type="warning">{{ row.missingCount }}</el-tag>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <span class="tp-status" :class="row.status === '已完成' ? 'tp-status-ok' : 'tp-status-warn'">{{ row.status }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="复核" width="100">
-          <template #default="{ row }">
-            <span class="tp-status" :class="reviewClass(row.reviewStatus)">{{ row.reviewStatus }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="更新时间" width="165">
-          <template #default="{ row }">{{ fmtTime(row.updatedAt) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="80" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="pager">
-        <el-pagination v-model:current-page="query.page" :page-size="query.size" :total="total"
-                       layout="total, prev, pager, next" @current-change="load" />
-      </div>
-    </el-card>
-
-    <!-- 详情弹层 -->
-    <el-drawer v-model="detailVisible" size="72%" :title="detailTitle" destroy-on-close>
-      <template v-if="detail">
-        <el-descriptions :column="3" border size="small" class="mb12">
-          <el-descriptions-item label="执行编号">{{ detail.run.runNo }}</el-descriptions-item>
-          <el-descriptions-item label="主任务">{{ taskName(detail.run.mainTask) }}</el-descriptions-item>
-          <el-descriptions-item label="风险">
-            <span class="tp-risk" :class="'tp-risk-' + detail.run.risk">{{ detail.run.risk }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="状态">{{ detail.run.status }}</el-descriptions-item>
-          <el-descriptions-item label="复核状态">{{ detail.run.reviewStatus }}</el-descriptions-item>
-          <el-descriptions-item label="引擎">{{ detail.run.engineMode === 'llm' ? 'LLM' : '规则引擎' }}</el-descriptions-item>
-        </el-descriptions>
-
-        <el-card shadow="never" class="mb12">
-          <div class="card-title">
-            <el-icon color="#e6a23c"><Collection /></el-icon>路由任务快照
-            <el-select v-model="snapshotFilter" size="small" style="width: 170px; margin-left: 12px" clearable
-                       placeholder="按任务筛选">
-              <el-option v-for="s in detail.snapshots" :key="s.taskType" :value="s.taskType" :label="s.taskName" />
-            </el-select>
-          </div>
-          <div v-for="s in filteredSnapshots" :key="s.seq" class="snap-block">
-            <div class="snap-head">
-              <span class="snap-name">{{ s.seq }}. {{ s.taskName }}</span>
-              <el-tag size="small" :type="s.role === 'main' ? 'warning' : 'info'">{{ s.role === 'main' ? '主任务' : '辅助' }}</el-tag>
-              <el-tag size="small" :type="s.completeness >= 80 ? 'success' : 'warning'">完整度 {{ s.completeness }}%</el-tag>
-              <template v-if="(s.missing || []).length">
-                <el-tag v-for="m in s.missing" :key="m" size="small" type="danger" effect="plain">缺：{{ m }}</el-tag>
-              </template>
-            </div>
-            <pre class="tp-json">{{ JSON.stringify(s.output, null, 2) }}</pre>
-          </div>
-        </el-card>
-
-        <el-card shadow="never" class="mb12">
-          <div class="card-title"><el-icon color="#e6a23c"><List /></el-icon>步骤明细（共 {{ detail.steps.length }} 步）</div>
-          <el-table :data="detail.steps" size="small" stripe max-height="360">
-            <el-table-column prop="seq" label="#" width="60" />
-            <el-table-column prop="taskType" label="任务" width="110">
-              <template #default="{ row }">{{ row.taskType ? taskName(row.taskType) : '公共' }}</template>
-            </el-table-column>
-            <el-table-column prop="stepName" label="步骤" min-width="200" />
-            <el-table-column label="状态" width="80">
-              <template #default="{ row }">
-                <span class="tp-status tp-status-ok">{{ row.status === 'done' ? '完成' : row.status }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="detail" label="说明" min-width="260" show-overflow-tooltip />
-          </el-table>
-        </el-card>
-
-        <el-card v-if="detail.run.reviewStatus === '待复核'" shadow="never">
-          <div class="card-title"><el-icon color="#e6a23c"><User /></el-icon>人工复核</div>
-          <div class="review-bar">
-            <el-input v-model="reviewNote" placeholder="复核备注" style="width: 380px" />
-            <el-button @click="review('reject')">驳回补充</el-button>
-            <el-button type="warning" class="tp-btn-primary" @click="review('approve')">确认通过</el-button>
-          </div>
-        </el-card>
-        <el-alert v-else :title="'该记录已复核：' + detail.run.reviewStatus" :type="detail.run.reviewStatus === '通过' ? 'success' : 'warning'"
-                  :closable="false" />
-      </template>
-    </el-drawer>
-  </div>
-</template>
-
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { apiRuns, apiRunDetail, apiRunReview } from '../api'
+import {
+  Search, RefreshCw, Check, AlertTriangle, ShieldCheck,
+  ListChecks, SquareTerminal, Database, ClipboardCheck, FileBarChart, TestTube2
+} from 'lucide-vue-next'
+import Badge from '../components/ui/Badge.vue'
+import TDrawer from '../components/ui/TDrawer.vue'
+import {
+  apiRuns, apiRunDetail, apiRunReview
+} from '../api'
+import { fmtSlash } from '../utils/format'
 
-const NAMES = {
-  testcase_gen: '测试用例生成', bug_analysis: 'Bug 分析', log_triage: '日志排查',
-  sql_analysis: 'SQL 分析', regression_list: '回归清单', test_report: '测试报告', prompt_test: 'Prompt 测试'
-}
+const SIZE = 20
 
-const query = ref({ keyword: '', status: '', page: 1, size: 10 })
+const query = ref({ keyword: '', status: '', page: 1, size: SIZE })
 const rows = ref([])
 const total = ref(0)
-const loading = ref(false)
+const pages = computed(() => Math.max(1, Math.ceil(total.value / SIZE)))
 const detailVisible = ref(false)
 const detail = ref(null)
-const detailTitle = ref('')
-const snapshotFilter = ref('')
 const reviewNote = ref('')
 
-const taskName = (t) => NAMES[t] || t
-const reviewClass = (s) => s === '通过' ? 'tp-status-ok' : s === '驳回补充' ? 'tp-status-block' : 'tp-status-warn'
-const fmtTime = (t) => (t || '').replace('T', ' ').slice(0, 19)
+const routeIcon = (type) => {
+  const map = {
+    testcase_gen: ListChecks, bug_analysis: AlertTriangle, log_triage: SquareTerminal,
+    sql_analysis: Database, regression_list: ClipboardCheck, test_report: FileBarChart
+  }
+  return map[type] || TestTube2
+}
 
-const filteredSnapshots = computed(() => {
-  if (!detail.value) return []
-  if (!snapshotFilter.value) return detail.value.snapshots
-  return detail.value.snapshots.filter((s) => s.taskType === snapshotFilter.value)
-})
+const run = computed(() => detail.value?.run || null)
+const canReview = computed(() => run.value && run.value.reviewStatus === '待复核')
 
 const load = async () => {
-  loading.value = true
-  try {
-    const data = await apiRuns(query.value)
-    rows.value = data.list || []
-    total.value = data.total || 0
-  } finally {
-    loading.value = false
-  }
+  const data = await apiRuns(query.value)
+  rows.value = data.list || []
+  total.value = data.total || 0
+  if (query.value.page > pages.value) query.value.page = 1
+}
+
+const setPage = (p) => {
+  if (p < 1 || p > pages.value) return
+  query.value.page = p
+  load()
 }
 
 const openDetail = async (row) => {
   detail.value = await apiRunDetail(row.id)
-  detailTitle.value = `执行详情 · ${row.runNo}`
-  snapshotFilter.value = ''
   reviewNote.value = ''
   detailVisible.value = true
 }
 
 const review = async (action) => {
-  const run = await apiRunReview(detail.value.run.id, { action, note: reviewNote.value })
-  detail.value.run.reviewStatus = run.reviewStatus
-  detail.value.run.status = run.status
-  ElMessage.success(action === 'approve' ? '已确认通过' : '已驳回补充')
+  const r = await apiRunReview(run.value.id, { action, note: reviewNote.value })
+  run.value.reviewStatus = r.reviewStatus
+  run.value.status = r.status
+  ElMessage.success(action === 'approve' ? '人工复核已完成' : '已驳回并标记待补充')
   await load()
 }
 
 onMounted(load)
 </script>
 
-<style scoped>
-.mb12 {
-  margin-bottom: 12px;
-}
+<template>
+  <div class="page stack wb-page">
+    <div class="page-intro">
+      <div>
+        <span class="wb-kicker">TRACEABLE RUNS</span>
+        <h2>执行记录</h2>
+        <p>每次识别、路由、步骤、输入、证据与人工复核都可追溯。</p>
+      </div>
+      <button class="button" @click="load"><RefreshCw />刷新</button>
+    </div>
 
-.search-bar {
-  display: flex;
-  gap: 8px;
-}
+    <div class="filterbar">
+      <label class="search">
+        <Search />
+        <input
+          v-model="query.keyword" placeholder="搜索标题或原始输入"
+          @keyup.enter="query.page = 1; load()"
+        >
+      </label>
+      <select v-model="query.status" @change="query.page = 1; load()">
+        <option value="">全部状态</option>
+        <option>待补充</option>
+        <option>执行中</option>
+        <option>已完成</option>
+      </select>
+      <span class="summary">共 {{ total }} 条</span>
+    </div>
 
-.pager {
-  margin-top: 12px;
-  display: flex;
-  justify-content: flex-end;
-}
+    <section class="panel table-panel">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>执行记录</th>
+              <th>主任务</th>
+              <th>路由数</th>
+              <th>风险</th>
+              <th>状态</th>
+              <th>缺项</th>
+              <th>复核</th>
+              <th>更新时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in rows" :key="r.id" @click="openDetail(r)">
+              <td>
+                <strong>{{ r.title }}</strong>
+                <small class="id">{{ r.runNo }}</small>
+              </td>
+              <td>{{ r.mainTask }}</td>
+              <td>{{ r.routeCount }}</td>
+              <td><Badge :value="r.risk" /></td>
+              <td><Badge :value="r.status" /></td>
+              <td>{{ r.missingCount || 0 }}</td>
+              <td>{{ r.reviewStatus }}</td>
+              <td>{{ fmtSlash(r.updatedAt) }}</td>
+            </tr>
+            <tr v-if="!rows.length">
+              <td colspan="8" style="text-align: center; color: #9a9e94; cursor: default">没有匹配的执行记录</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <span>第 {{ query.page }} / {{ pages }} 页</span>
+        <button :disabled="query.page <= 1" @click="setPage(query.page - 1)">‹</button>
+        <button :disabled="query.page >= pages" @click="setPage(query.page + 1)">›</button>
+      </div>
+    </section>
 
-.snap-block {
-  margin-bottom: 14px;
-}
+    <TDrawer
+      v-if="detailVisible && detail" eyebrow="RUN DETAIL" width-class="wb-run-drawer"
+      :title="run.title || run.runNo" :subtitle="run.runNo" @close="detailVisible = false"
+    >
+      <section class="panel wb-result">
+        <div class="wb-result-head">
+          <div>
+            <span class="wb-id">{{ run.runNo }}</span>
+            <h3>{{ run.title }}</h3>
+            <p>{{ run.routeCount }} 个路由 · {{ run.stepCount }} 个步骤 · {{ fmtSlash(run.updatedAt) }} · 引擎 {{ run.engineMode === 'llm' ? 'LLM' : '规则' }}</p>
+          </div>
+          <div>
+            <span class="wb-status" :class="run.risk === 'P0' ? 'danger' : ''">{{ run.risk || '—' }}</span>
+            <span class="wb-status" :class="run.status === '已完成' ? 'success' : ''">{{ run.status }}</span>
+          </div>
+        </div>
+        <div class="wb-result-tabs">
+          <span v-for="s in detail.snapshots || []" :key="s.seq">{{ s.role === 'main' ? '主任务' : '辅助任务' }} · {{ s.taskName }}</span>
+        </div>
+        <article v-for="s in detail.snapshots || []" :key="'out' + s.seq" class="wb-output">
+          <header>
+            <span class="wb-entry-icon"><component :is="routeIcon(s.taskType)" /></span>
+            <div>
+              <strong>{{ s.taskName }}</strong>
+              <small>引用范围：暂无知识事实引用 · 完整度 {{ s.completeness }}%</small>
+            </div>
+          </header>
+          <pre>{{ JSON.stringify(s.output, null, 2) }}</pre>
+        </article>
+        <div class="wb-review">
+          <div>
+            <ShieldCheck />
+            <span>
+              <strong>人工复核</strong>
+              <small>确认任务识别、证据、风险与结构化输出。AI 不做最终上线批准。</small>
+            </span>
+          </div>
+          <div style="flex: 1; justify-content: flex-end">
+            <input v-model="reviewNote" class="wb-review-note" placeholder="复核备注（驳回时请说明需补充的内容）" :disabled="!canReview">
+            <button class="button" :disabled="!canReview" @click="review('reject')"><AlertTriangle />驳回补充</button>
+            <button class="button primary" :disabled="!canReview" @click="review('approve')"><Check />确认通过</button>
+            <span v-if="!canReview" class="wb-status" :class="run.reviewStatus === '通过' ? 'success' : 'danger'">{{ run.reviewStatus }}</span>
+          </div>
+        </div>
+      </section>
 
-.snap-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-}
-
-.snap-name {
-  font-weight: 600;
-}
-
-.review-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-</style>
+      <section class="detail-section">
+        <h3>逐步执行轨迹</h3>
+        <div class="vertical-flow">
+          <div v-for="s in detail.steps || []" :key="s.id || s.seq">
+            <span>{{ s.seq }}</span>
+            <span class="wb-mini-icon"><component :is="routeIcon(s.taskType)" /></span>
+            <div>
+              <strong>{{ s.stepName }}</strong>
+              <small>{{ s.taskType || '公共' }} · {{ fmtSlash(s.completedAt || s.createdAt) }}</small>
+            </div>
+            <Badge :value="s.status === 'done' ? '已完成' : s.status" />
+          </div>
+        </div>
+      </section>
+    </TDrawer>
+  </div>
+</template>

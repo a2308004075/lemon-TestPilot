@@ -60,6 +60,10 @@ export const apiTaskCreate = (payload) => http.post('/api/tasks', payload)
 export const apiTaskCompleteness = (payload) => http.post('/api/tasks/completeness', payload)
 export const apiTaskDetail = (id) => http.get(`/api/tasks/${id}`)
 export const apiTaskReview = (id, payload) => http.post(`/api/tasks/${id}/review`, payload)
+export const apiTaskToKnowledge = (id) => http.post(`/api/tasks/${id}/to-knowledge`)
+
+// 操作审计（详情抽屉时间线）
+export const apiAudit = (params) => http.get('/api/audit', { params })
 
 // 回归测试
 export const apiRegressionLists = () => http.get('/api/regression/lists')
@@ -94,11 +98,12 @@ export const apiValidationRun = (id) => http.post(`/api/validation/cases/${id}/r
 // 配置中心
 export const apiConfigModules = () => http.get('/api/config/modules')
 export const apiConfigModuleCreate = (payload) => http.post('/api/config/modules', payload)
+export const apiConfigModuleUpdate = (id, payload) => http.put(`/api/config/modules/${id}`, payload)
 export const apiConfigModuleToggle = (id) => http.put(`/api/config/modules/${id}/toggle`)
 export const apiConfigLlm = () => http.get('/api/config/llm')
 export const apiConfigLlmUpdate = (id, payload) => http.put(`/api/config/llm/${id}`, payload)
 export const apiConfigLlmTest = (id) => http.post(`/api/config/llm/${id}/test-connection`)
 export const apiConfigTemplates = (params) => http.get('/api/config/templates', { params })
 export const apiConfigTemplateUpdate = (taskType, fields) => http.put(`/api/config/templates/${taskType}`, { fields })
-export const apiConfigRules = () => http.get('/api/config/rules')
-export const apiConfigRuleUpdate = (id, payload) => http.put(`/api/config/rules/${id}`, payload)
+export const apiConfigKbRules = () => http.get('/api/config/kb-rules')
+export const apiConfigKbRuleSave = (mainTaskType, categories) => http.put(`/api/config/kb-rules/${mainTaskType}`, { categories })

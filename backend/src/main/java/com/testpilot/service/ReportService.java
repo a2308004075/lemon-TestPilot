@@ -41,6 +41,8 @@ public class ReportService {
     private RegressionItemRepository regItemRepo;
     @Autowired
     private TestCaseRepository caseRepo;
+    @Autowired
+    private AuditService auditService;
 
     public List<TestReport> list() {
         return reportRepo.findAllByOrderByIdDesc();
@@ -166,10 +168,12 @@ public class ReportService {
         report.setReportDate(LocalDate.now());
         report.setContentJson(JsonUtil.write(content));
         report.setSourceTaskIds(joinIds(taskIds));
-        reportRepo.save(report);
+        TestReport savedReport = reportRepo.save(report);
+        auditService.record("report", savedReport.getReportNo(), "生成测试报告",
+                title + " · " + conclusion + " · 通过 " + pass + " / 失败 " + fail + " / 阻塞 " + block);
 
         Map<String, Object> result = new LinkedHashMap<String, Object>();
-        result.put("report", report);
+        result.put("report", savedReport);
         result.put("content", content);
         return result;
     }

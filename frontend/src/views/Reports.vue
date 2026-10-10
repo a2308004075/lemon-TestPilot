@@ -1,150 +1,223 @@
 <template>
   <div class="page">
-    <h2 class="page-title">测试报告</h2>
-    <p class="page-desc">勾选来源（分析任务 / 回归清单 / 用例）聚合统一报告：阻塞 &gt; 0 不可上线、有失败有条件上线、全通过可上线（仅建议，AI 不批准上线）。</p>
+    <!-- 页头 -->
+    <div class="page-intro">
+      <div>
+        <h2>测试报告</h2>
+        <p>勾选用例、Bug、分析任务和回归结果，输出统一质量结论。</p>
+      </div>
+      <div class="page-actions">
+        <button class="button primary" @click="openGenerate"><Plus /> 生成报告</button>
+      </div>
+    </div>
 
-    <div class="toolbar">
-      <div class="spacer" />
-      <el-button type="warning" class="tp-btn-primary" @click="openGenerate">生成报告</el-button>
+    <div class="tabs">
+      <button :class="{ active: tab === 'list' }" @click="tab = 'list'">报告列表</button>
+      <button :class="{ active: tab === 'generate' }" @click="tab = 'generate'">生成报告</button>
+      <button :class="{ active: tab === 'template' }" @click="tab = 'template'">报告模板</button>
     </div>
 
     <!-- 报告列表 -->
-    <el-card shadow="never">
-      <el-table :data="reports" stripe v-loading="loading">
-        <el-table-column prop="reportNo" label="编号" width="120" />
-        <el-table-column prop="title" label="标题" min-width="260" show-overflow-tooltip />
-        <el-table-column prop="version" label="版本" width="100" />
-        <el-table-column prop="modules" label="覆盖模块" min-width="140" show-overflow-tooltip />
-        <el-table-column label="结论" width="110">
-          <template #default="{ row }">
-            <span class="tp-status" :class="conclusionClass(row.conclusion)">{{ row.conclusion }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="通过/失败/阻塞" width="140" align="center">
-          <template #default="{ row }">
-            <span class="ok">{{ row.passCount }}</span> /
-            <span class="fail">{{ row.failCount }}</span> /
-            <span class="block">{{ row.blockCount }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="reportDate" label="报告日期" width="110" />
-        <el-table-column label="操作" width="80" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="viewReport(row)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-
-    <!-- 生成报告弹窗 -->
-    <el-dialog v-model="genVisible" title="生成统一报告" width="640px" destroy-on-close>
-      <el-form label-width="90px">
-        <el-form-item label="报告标题" required>
-          <el-input v-model="genForm.title" placeholder="如：电商平台 v2.8.4 测试报告" />
-        </el-form-item>
-        <el-row :gutter="10">
-          <el-col :span="12">
-            <el-form-item label="项目">
-              <el-input v-model="genForm.projectName" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="发布版本" required>
-              <el-input v-model="genForm.version" placeholder="如 v2.8.4" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="来源任务">
-          <el-select v-model="genForm.sourceTaskIds" multiple filterable placeholder="勾选分析任务" style="width: 100%">
-            <el-option v-for="t in allTasks" :key="t.id" :value="t.id"
-                       :label="`${t.taskNo} · ${t.title}（${t.risk}）`" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="回归清单">
-          <el-select v-model="genForm.regressionListIds" multiple placeholder="勾选回归清单" style="width: 100%">
-            <el-option v-for="l in regLists" :key="l.id" :value="l.id"
-                       :label="`${l.title}（${l.passCount}通过/${l.failCount}失败/${l.blockCount}阻塞）`" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="补充用例">
-          <el-select v-model="genForm.caseIds" multiple filterable placeholder="勾选需计入的用例" style="width: 100%">
-            <el-option v-for="c in cases" :key="c.id" :value="c.id"
-                       :label="`${c.caseNo} · ${c.title}（${c.status}）`" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="genVisible = false">取消</el-button>
-        <el-button type="warning" class="tp-btn-primary" :loading="generating" @click="generate">生成报告</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 报告详情 -->
-    <el-drawer v-model="detailVisible" size="56%" :title="detail ? detail.report.reportNo + ' · ' + detail.report.title : ''">
-      <template v-if="detail">
-        <el-descriptions :column="3" border size="small" class="mb12">
-          <el-descriptions-item label="版本">{{ detail.report.version }}</el-descriptions-item>
-          <el-descriptions-item label="报告日期">{{ detail.report.reportDate }}</el-descriptions-item>
-          <el-descriptions-item label="结论">
-            <span class="tp-status" :class="conclusionClass(detail.report.conclusion)">{{ detail.report.conclusion }}</span>
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <div class="count-row mb12">
-          <div class="count-card ok"><div class="num">{{ detail.report.passCount }}</div><div>通过</div></div>
-          <div class="count-card fail"><div class="num">{{ detail.report.failCount }}</div><div>失败</div></div>
-          <div class="count-card block"><div class="num">{{ detail.report.blockCount }}</div><div>阻塞</div></div>
+    <div v-if="tab === 'list'" class="stack" style="margin-top: 18px">
+      <div class="panel table-panel">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>报告</th><th>项目 / 版本</th><th>覆盖模块</th><th>结论</th><th>失败</th><th>阻塞</th><th>报告日期</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in reports" :key="r.id" @click="viewReport(r)">
+                <td><strong>{{ r.title }}</strong><small>{{ r.reportNo }}</small></td>
+                <td><strong>{{ r.projectName }}</strong><small>{{ r.version }}</small></td>
+                <td>{{ r.modules || '—' }}</td>
+                <td><Badge :value="r.conclusion" /></td>
+                <td>{{ r.failCount }}</td>
+                <td>{{ r.blockCount }}</td>
+                <td>{{ r.reportDate }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
+        <Empty v-if="!loading && !reports.length" title="暂无测试报告" desc="在「生成报告」勾选来源后一键聚合" />
+      </div>
+    </div>
 
-        <h4>结论摘要</h4>
-        <p class="detail-text">{{ detail.content.summary }}</p>
+    <!-- 生成报告 -->
+    <div v-else-if="tab === 'generate'" class="two-col" style="margin-top: 18px">
+      <div class="panel">
+        <div class="panel-title">
+          <div>
+            <h3>报告信息</h3>
+            <p>统一模板 v1.0</p>
+          </div>
+        </div>
+        <div class="field">
+          <span>报告标题<em>*</em></span>
+          <input v-model="genForm.title" placeholder="如：电商平台 v2.8.4 测试报告" />
+        </div>
+        <div class="inline-grid">
+          <div class="field">
+            <span>发布版本<em>*</em></span>
+            <input v-model="genForm.version" placeholder="如 v2.8.4" />
+          </div>
+          <div class="field">
+            <span>上线结论</span>
+            <select v-model="genForm.conclusion">
+              <option>有条件上线</option>
+              <option>可上线</option>
+              <option>不可上线</option>
+            </select>
+          </div>
+        </div>
+        <button class="button primary" style="margin-top: 16px" :disabled="generating" @click="generate">
+          <FileBarChart /> {{ generating ? '生成中…' : '生成统一报告' }}
+        </button>
+      </div>
 
-        <h4>来源</h4>
-        <el-table :data="detail.content.sources || []" size="small" stripe class="mb12">
-          <el-table-column prop="type" label="类型" width="120" />
-          <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
-          <el-table-column prop="risk" label="风险" width="70" align="center" />
-        </el-table>
+      <div class="panel source-picker">
+        <div class="panel-title">
+          <div>
+            <h3>选择报告来源</h3>
+            <p>已选 {{ selectedCount }} 项</p>
+          </div>
+        </div>
+        <label v-for="t in allTasks" :key="'t' + t.id">
+          <input type="checkbox" :checked="genForm.sourceTaskIds.includes(t.id)"
+                 @change="toggleId(genForm.sourceTaskIds, t.id)" />
+          <span class="task-icon"><ListChecks /></span>
+          <span>
+            {{ t.title }}
+            <small>{{ taskName(t.taskType) }} · {{ [t.projectName, t.moduleName, t.submoduleName].filter(Boolean).slice(-2).join(' / ') || '未分组' }}</small>
+          </span>
+          <Badge :value="t.risk" />
+        </label>
+        <label v-for="l in regLists" :key="'l' + l.id">
+          <input type="checkbox" :checked="genForm.regressionListIds.includes(l.id)"
+                 @change="toggleId(genForm.regressionListIds, l.id)" />
+          <span class="task-icon"><ClipboardCheck /></span>
+          <span>
+            {{ l.title }}
+            <small>{{ l.total }} 项 · {{ l.passCount }} 通过 / {{ l.failCount }} 失败 / {{ l.blockCount }} 阻塞</small>
+          </span>
+          <Badge :value="l.status" />
+        </label>
+        <label v-for="c in cases" :key="'c' + c.id">
+          <input type="checkbox" :checked="genForm.caseIds.includes(c.id)"
+                 @change="toggleId(genForm.caseIds, c.id)" />
+          <span class="task-icon"><FileText /></span>
+          <span>
+            {{ c.title }}
+            <small>{{ c.caseNo }} · {{ c.status }}</small>
+          </span>
+          <Badge :value="c.priority" />
+        </label>
+        <p v-if="!allTasks.length && !regLists.length && !cases.length" class="tip">暂无可选来源</p>
+      </div>
+    </div>
 
-        <h4>风险与遗留</h4>
-        <ul v-if="(detail.content.riskNotes || []).length" class="risk-list">
+    <!-- 报告模板 -->
+    <div v-else style="margin-top: 18px">
+      <div class="panel">
+        <div class="panel-title">
+          <div>
+            <h3>测试报告统一模板</h3>
+            <p>当前版本 v1.0</p>
+          </div>
+        </div>
+        <div class="warning">
+          <AlertTriangle />
+          <p>模板修改统一在「配置中心 → 格式模板」完成。保存后历史记录会同步新结构，新增字段显示「待补齐」，原始快照不受影响。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 报告详情抽屉 -->
+    <TDrawer v-if="detailVisible && detail" eyebrow="REPORT DETAIL" :title="detail.report.title"
+             :subtitle="detail.report.reportNo" width-class="wb-run-drawer" @close="detailVisible = false">
+      <div class="report-verdict">
+        <Badge :value="detail.report.conclusion" />
+        <span>上线结论</span>
+        <strong>{{ detail.report.version }}</strong>
+      </div>
+      <div class="detail-grid">
+        <div><span>报告日期</span><strong>{{ detail.report.reportDate }}</strong></div>
+        <div><span>项目</span><strong>{{ detail.report.projectName }}</strong></div>
+        <div><span>覆盖模块</span><strong>{{ detail.report.modules || '—' }}</strong></div>
+        <div><span>数据来源</span><strong>{{ (detail.content.sources || []).length }} 项</strong></div>
+      </div>
+      <div class="detail-section">
+        <h3>执行结果</h3>
+        <div class="report-numbers">
+          <span>通过<b>{{ detail.report.passCount }}</b></span>
+          <span>失败<b>{{ detail.report.failCount }}</b></span>
+          <span>阻塞<b>{{ detail.report.blockCount }}</b></span>
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>结论摘要</h3>
+        <p>{{ detail.content.summary }}</p>
+      </div>
+      <div class="detail-section">
+        <h3>风险与遗留问题</h3>
+        <ul v-if="(detail.content.riskNotes || []).length">
           <li v-for="(r, i) in detail.content.riskNotes" :key="i">{{ r }}</li>
         </ul>
-        <p v-else class="detail-text">无风险遗留</p>
-
-        <el-alert type="warning" :closable="false" class="mb12"
-                  :title="detail.content.manualReview" />
-
-        <div class="detail-actions">
-          <el-button @click="copyReport">复制</el-button>
-          <el-button @click="downloadMarkdown">下载 Markdown</el-button>
-          <el-button type="warning" plain @click="printReport">PDF 下载</el-button>
-        </div>
-      </template>
-    </el-drawer>
+        <p v-else>无风险遗留</p>
+      </div>
+      <div class="missing-box">
+        <ShieldAlert />
+        <p>{{ detail.content.manualReview }}</p>
+      </div>
+      <div class="drawer-actions" style="margin-top: 16px">
+        <button class="button" @click="copyReport"><Copy /> 复制</button>
+        <button class="button" @click="downloadMarkdown"><Download /> Markdown</button>
+        <button class="button primary" @click="printReport"><Printer /> PDF</button>
+      </div>
+    </TDrawer>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import {
+  Plus, FileBarChart, ListChecks, ClipboardCheck, FileText, AlertTriangle, ShieldAlert, Copy, Download, Printer
+} from 'lucide-vue-next'
 import {
   apiReports, apiReportGenerate, apiReportDetail,
   apiTasks, apiRegressionLists, apiCases
 } from '../api'
+import { taskName } from '../utils/format'
+import Badge from '../components/ui/Badge.vue'
+import Empty from '../components/ui/Empty.vue'
+import TDrawer from '../components/ui/TDrawer.vue'
 
+const tab = ref('list')
 const reports = ref([])
 const loading = ref(false)
-const genVisible = ref(false)
 const generating = ref(false)
-const genForm = ref({ title: '', version: '', projectName: '电商平台', sourceTaskIds: [], regressionListIds: [], caseIds: [] })
+const emptyForm = () => ({ title: '', version: '', conclusion: '有条件上线', projectName: '电商平台', sourceTaskIds: [], regressionListIds: [], caseIds: [] })
+const genForm = ref(emptyForm())
 const allTasks = ref([])
 const regLists = ref([])
 const cases = ref([])
 const detailVisible = ref(false)
 const detail = ref(null)
 
-const conclusionClass = (c) => c === '可上线' ? 'tp-status-ok' : c === '不可上线' ? 'tp-status-block' : 'tp-status-warn'
+const selectedCount = computed(() =>
+  genForm.value.sourceTaskIds.length + genForm.value.regressionListIds.length + genForm.value.caseIds.length
+)
+
+const toggleId = (arr, id) => {
+  const i = arr.indexOf(id)
+  if (i >= 0) {
+    arr.splice(i, 1)
+  } else {
+    arr.push(id)
+  }
+}
 
 const load = async () => {
   loading.value = true
@@ -155,13 +228,21 @@ const load = async () => {
   }
 }
 
-const openGenerate = async () => {
+const loadSources = async () => {
+  if (allTasks.value.length || regLists.value.length || cases.value.length) return
   const [t, l, c] = await Promise.all([apiTasks({}), apiRegressionLists(), apiCases({ page: 1, size: 200 })])
   allTasks.value = t.list || []
   regLists.value = l || []
   cases.value = c.list || []
-  genVisible.value = true
 }
+
+const openGenerate = () => {
+  tab.value = 'generate'
+}
+
+watch(tab, (t) => {
+  if (t === 'generate') loadSources()
+})
 
 const generate = async () => {
   if (!genForm.value.title.trim() || !genForm.value.version.trim()) {
@@ -172,8 +253,8 @@ const generate = async () => {
   try {
     await apiReportGenerate(genForm.value)
     ElMessage.success('报告已生成')
-    genVisible.value = false
-    genForm.value = { title: '', version: '', projectName: '电商平台', sourceTaskIds: [], regressionListIds: [], caseIds: [] }
+    genForm.value = emptyForm()
+    tab.value = 'list'
     await load()
   } finally {
     generating.value = false
@@ -237,67 +318,3 @@ const printReport = () => {
 
 onMounted(load)
 </script>
-
-<style scoped>
-.mb12 {
-  margin-bottom: 12px;
-}
-
-.toolbar {
-  display: flex;
-  margin-bottom: 12px;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.ok { color: var(--tp-pass); font-weight: 600; }
-.fail { color: var(--tp-p0); font-weight: 600; }
-.block { color: var(--tp-p1); font-weight: 600; }
-
-.count-row {
-  display: flex;
-  gap: 12px;
-}
-
-.count-card {
-  flex: 1;
-  text-align: center;
-  border-radius: 8px;
-  padding: 14px;
-  font-size: 13px;
-  border: 1px solid #ebeef5;
-}
-
-.count-card .num {
-  font-size: 26px;
-  font-weight: 700;
-}
-
-.count-card.ok { background: #f0f9eb; color: var(--tp-pass); }
-.count-card.fail { background: #fef0f0; color: var(--tp-p0); }
-.count-card.block { background: var(--tp-primary-light); color: #b17b00; }
-
-.detail-text {
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.7;
-  background: #fafafa;
-  border-radius: 6px;
-  padding: 10px 12px;
-}
-
-.risk-list {
-  padding-left: 18px;
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.9;
-}
-
-.detail-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-</style>

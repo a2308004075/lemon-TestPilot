@@ -4,6 +4,7 @@ import com.testpilot.common.ApiResponse;
 import com.testpilot.entity.SysLlmConfig;
 import com.testpilot.entity.SysModule;
 import com.testpilot.entity.SysOutputTemplate;
+import com.testpilot.entity.SysTaskKbRule;
 import com.testpilot.entity.SysTaskRule;
 import com.testpilot.service.ConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +40,12 @@ public class ConfigController {
     @PostMapping("/modules")
     public ApiResponse<SysModule> createModule(@RequestBody Map<String, Object> body) {
         return ApiResponse.ok(configService.createModule(body));
+    }
+
+    /** 编辑三级模块名称 */
+    @PutMapping("/modules/{id}")
+    public ApiResponse<SysModule> updateModule(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(configService.updateModule(id, body));
     }
 
     /** 启用 / 停用 */
@@ -95,5 +102,25 @@ public class ConfigController {
     @PutMapping("/rules/{id}")
     public ApiResponse<SysTaskRule> ruleUpdate(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(configService.ruleUpdate(id, body));
+    }
+
+    // ---------------- 任务与知识关联 ----------------
+
+    @GetMapping("/kb-rules")
+    public ApiResponse<List<Map<String, Object>>> kbRules() {
+        return ApiResponse.ok(configService.kbRules());
+    }
+
+    /** 保存任务的知识分类关联（全量覆盖） */
+    @PutMapping("/kb-rules/{mainTaskType}")
+    public ApiResponse<List<SysTaskKbRule>> kbRuleSave(
+            @PathVariable String mainTaskType, @RequestBody Map<String, Object> body) {
+        Object categories = body.get("categories");
+        if (!(categories instanceof List)) {
+            return ApiResponse.error("categories 必须为数组");
+        }
+        @SuppressWarnings("unchecked")
+        List<String> list = (List<String>) categories;
+        return ApiResponse.ok(configService.saveKbRule(mainTaskType, list));
     }
 }

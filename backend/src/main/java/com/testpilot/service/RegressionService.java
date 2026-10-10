@@ -35,6 +35,8 @@ public class RegressionService {
     private TestCaseRepository caseRepo;
     @Autowired
     private KbItemRepository kbRepo;
+    @Autowired
+    private AuditService auditService;
 
     /** 全部清单（含条目与汇总） */
     public List<Map<String, Object>> lists() {
@@ -164,6 +166,8 @@ public class RegressionService {
             item.setSeq(seq++);
             itemRepo.save(item);
         }
+        auditService.record("regression", "reg_" + list.getId(), "生成回归清单",
+                title + " · " + version + " · " + items.size() + " 项");
         return listDetail(list);
     }
 
@@ -189,6 +193,8 @@ public class RegressionService {
         list.setProgress(items.isEmpty() ? 0 : (int) Math.round(executed * 100.0 / items.size()));
         list.setStatus(executed >= items.size() && !items.isEmpty() ? "已完成" : "执行中");
         listRepo.save(list);
+        auditService.record("regression", "reg_" + list.getId(), "回归项状态",
+                item.getTitle() + " → " + status);
         return listDetail(list);
     }
 

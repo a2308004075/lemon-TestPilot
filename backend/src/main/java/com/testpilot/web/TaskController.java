@@ -57,4 +57,10 @@ public class TaskController {
         String note = body.get("note") == null ? "" : body.get("note").toString();
         return ApiResponse.ok(taskService.review(id, action, note));
     }
+
+    /** 申请入知识库：复核通过的分析结论沉淀为待审核知识 */
+    @PostMapping("/{id}/to-knowledge")
+    public ApiResponse<TaskRecord> toKnowledge(@PathVariable Long id) {
+        return ApiResponse.ok(taskService.toKnowledge(id));
+    }
 }

@@ -1,109 +1,46 @@
-<template>
-  <div class="page">
-    <!-- 黄色问候横幅 -->
-    <div class="hero">
-      <div class="hero-left">
-        <div class="hero-hi">下午好，测试同学</div>
-        <div class="hero-tip">一句话发起完整测试分析：识别任务 → 补充缺项 → 逐任务执行 → 人工复核</div>
-      </div>
-      <el-button type="warning" class="hero-btn" @click="$router.push('/assistant')">
-        <el-icon style="margin-right: 4px"><MagicStick /></el-icon>
-        开始智能分析
-      </el-button>
-    </div>
-
-    <!-- 6 状态卡 -->
-    <el-row :gutter="12" class="row-cards">
-      <el-col v-for="c in stats.statusCards || []" :key="c.key" :span="4">
-        <el-card shadow="never" class="stat-card">
-          <div class="stat-value">{{ c.value }}<span class="stat-unit">{{ c.unit }}</span></div>
-          <div class="stat-name">{{ c.name }}</div>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <!-- 快捷入口 + 数据资产 -->
-    <el-row :gutter="12" class="row-cards">
-      <el-col :span="14">
-        <el-card shadow="never">
-          <div class="card-title"><el-icon color="#e6a23c"><Star /></el-icon>快捷入口</div>
-          <div class="quick-grid">
-            <div v-for="q in quicks" :key="q.path" class="quick-item" @click="$router.push(q.path)">
-              <el-icon :size="20" color="#b17b00"><component :is="q.icon" /></el-icon>
-              <span>{{ q.title }}</span>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="10">
-        <el-card shadow="never">
-          <div class="card-title"><el-icon color="#e6a23c"><Coin /></el-icon>数据资产</div>
-          <div class="asset-grid">
-            <div v-for="a in stats.assets || []" :key="a.key" class="asset-item">
-              <div class="asset-value">{{ a.value }}</div>
-              <div class="asset-name">{{ a.name }}（{{ a.unit }}）</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <!-- 最近任务 -->
-    <el-card shadow="never" class="row-cards">
-      <div class="card-title"><el-icon color="#e6a23c"><Clock /></el-icon>最近任务</div>
-      <el-table :data="recent" size="default" stripe>
-        <el-table-column label="编号" width="150">
-          <template #default="{ row }">{{ row.no }}</template>
-        </el-table-column>
-        <el-table-column prop="title" label="标题" min-width="260" show-overflow-tooltip />
-        <el-table-column label="类型" width="130">
-          <template #default="{ row }">{{ row.kind === 'run' ? row.mainTaskName : row.typeName }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <span class="tp-status" :class="row.status === '已完成' ? 'tp-status-ok' : 'tp-status-warn'">{{ row.status }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="复核状态" width="110">
-          <template #default="{ row }">
-            <span class="tp-status" :class="reviewClass(row.reviewStatus)">{{ row.reviewStatus }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="更新时间" width="170">
-          <template #default="{ row }">{{ fmtTime(row.updatedAt) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small"
-                       @click="$router.push(row.kind === 'run' ? '/runs' : (row.type === 'bug_analysis' ? '/bug-analysis' : row.type === 'log_triage' ? '/log-analysis' : row.type === 'sql_analysis' ? '/sql-analysis' : '/assistant'))">
-              查看
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-  </div>
-</template>
-
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { Sparkles, ChevronRight, ListChecks, Bug, SquareTerminal, Database, ClipboardCheck, FileBarChart } from 'lucide-vue-next'
+import Badge from '../components/ui/Badge.vue'
 import { apiDashboardStats } from '../api'
+import { fmtDate } from '../utils/format'
 
+const router = useRouter()
 const stats = ref({})
 const recent = ref([])
 
+// 后端 statusCards key → 左侧彩色竖条色类
+const cardColor = {
+  pendingSupplement: 'warn',
+  pendingReview: 'yellow',
+  runCount: 'blue',
+  kbEffective: 'blue',
+  p0Cases: 'red',
+  taskCount: 'dark'
+}
+
 const quicks = [
-  { path: '/assistant', title: 'AI 测试助手', icon: 'MagicStick' },
-  { path: '/bug-analysis', title: 'Bug 分析', icon: 'Warning' },
-  { path: '/log-analysis', title: '日志分析', icon: 'Tickets' },
-  { path: '/sql-analysis', title: 'SQL 分析', icon: 'Coin' },
-  { path: '/regression', title: '生成回归清单', icon: 'RefreshRight' },
-  { path: '/reports', title: '生成测试报告', icon: 'DataAnalysis' }
+  { key: 'cases', path: '/cases', title: '生成测试用例', desc: '将需求拆解为可执行用例', icon: ListChecks },
+  { key: 'bug', path: '/bug-analysis', title: 'Bug 分析', desc: '定位现象、证据和回归范围', icon: Bug },
+  { key: 'logs', path: '/log-analysis', title: '日志分析', desc: '还原调用链与异常节点', icon: SquareTerminal },
+  { key: 'sql', path: '/sql-analysis', title: 'SQL 分析', desc: '检查正确性、性能和一致性', icon: Database },
+  { key: 'regression', path: '/regression', title: '生成回归清单', desc: '从改动与历史风险生成范围', icon: ClipboardCheck },
+  { key: 'report', path: '/reports', title: '生成测试报告', desc: '汇总多来源形成质量结论', icon: FileBarChart }
 ]
 
-const reviewClass = (s) => s === '通过' ? 'tp-status-ok' : s === '驳回补充' ? 'tp-status-block' : 'tp-status-warn'
+const assetPath = { cases: '/cases', tasks: '/assistant', kb: '/knowledge', reports: '/reports' }
 
-const fmtTime = (t) => (t || '').replace('T', ' ').slice(0, 19)
+const rowModule = (row) => {
+  if (row.moduleName) return [row.projectName, row.moduleName, row.submoduleName].filter(Boolean).slice(-2).join(' / ')
+  return '—'
+}
+
+const openRow = (row) => {
+  if (row.kind === 'run') return router.push('/runs')
+  const map = { bug_analysis: '/bug-analysis', log_triage: '/log-analysis', sql_analysis: '/sql-analysis' }
+  router.push(map[row.type] || '/assistant')
+}
 
 onMounted(async () => {
   const data = await apiDashboardStats()
@@ -116,110 +53,99 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
-.hero {
-  background: linear-gradient(120deg, #f7c948 0%, #ffd966 100%);
-  border-radius: 10px;
-  padding: 22px 24px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
+<template>
+  <div class="page stack">
+    <section class="hero">
+      <div>
+        <span class="kicker">GOOD MORNING · QA</span>
+        <h2>今天从哪里开始？</h2>
+        <p>任务、用例、知识与质量结论都在一个工作台内完成。</p>
+      </div>
+      <button class="button dark" @click="router.push('/assistant')"><Sparkles />创建智能任务</button>
+    </section>
 
-.hero-hi {
-  color: #4a3800;
-  font-size: 20px;
-  font-weight: 700;
-}
+    <div class="metric-grid six">
+      <article v-for="c in stats.statusCards || []" :key="c.key" class="metric" :class="cardColor[c.key]">
+        <span>{{ c.name }}</span>
+        <strong>{{ c.value }}<small style="font-size: 12px; margin-left: 3px">{{ c.unit }}</small></strong>
+        <small>实时统计</small>
+      </article>
+    </div>
 
-.hero-tip {
-  color: #6b5410;
-  font-size: 13px;
-  margin-top: 6px;
-}
+    <div class="two-col wide-left">
+      <section class="panel">
+        <div class="panel-title">
+          <div>
+            <h3>快捷入口</h3>
+            <p>每项任务都内置智能输入</p>
+          </div>
+          <button class="text-button" @click="router.push('/assistant')">AI 测试助手 <ChevronRight /></button>
+        </div>
+        <div class="quick-grid">
+          <button v-for="q in quicks" :key="q.key" class="quick-card" @click="router.push(q.path)">
+            <span class="task-icon"><component :is="q.icon" /></span>
+            <div>
+              <strong>{{ q.title }}</strong>
+              <span>{{ q.desc }}</span>
+            </div>
+            <ChevronRight />
+          </button>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">
+          <div>
+            <h3>数据资产</h3>
+            <p>MySQL 实时统计</p>
+          </div>
+        </div>
+        <div class="asset-list">
+          <button v-for="a in stats.assets || []" :key="a.key" @click="router.push(assetPath[a.key] || '/dashboard')">
+            <span>{{ a.name }}</span>
+            <strong>{{ a.value }}</strong>
+            <ChevronRight />
+          </button>
+        </div>
+      </section>
+    </div>
 
-.hero-btn {
-  background: #4a3800;
-  border-color: #4a3800;
-  color: #ffe9a8;
-  font-weight: 600;
-}
-
-.row-cards {
-  margin-bottom: 12px;
-}
-
-.stat-card {
-  text-align: center;
-  border-top: 3px solid var(--tp-primary);
-}
-
-.stat-value {
-  font-size: 26px;
-  font-weight: 700;
-  color: #303133;
-}
-
-.stat-unit {
-  font-size: 12px;
-  color: #909399;
-  margin-left: 2px;
-}
-
-.stat-name {
-  color: #909399;
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-.quick-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.quick-item {
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
-  padding: 18px 12px;
-  text-align: center;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  transition: all 0.15s;
-}
-
-.quick-item:hover {
-  border-color: var(--tp-primary);
-  background: var(--tp-primary-light);
-}
-
-.asset-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-}
-
-.asset-item {
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
-  padding: 14px;
-  text-align: center;
-}
-
-.asset-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: #b17b00;
-}
-
-.asset-name {
-  color: #909399;
-  font-size: 12px;
-  margin-top: 4px;
-}
-</style>
+    <section class="panel">
+      <div class="panel-title">
+        <div>
+          <h3>最近任务</h3>
+          <p>点击查看详情</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>任务</th>
+              <th>类型</th>
+              <th>模块</th>
+              <th>风险</th>
+              <th>审核</th>
+              <th>更新时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="t in recent" :key="t.kind + t.id" @click="openRow(t)">
+              <td>
+                <strong>{{ t.title }}</strong>
+                <small class="id">{{ t.no }}</small>
+              </td>
+              <td>{{ t.kind === 'run' ? t.mainTaskName : t.typeName }}</td>
+              <td>{{ rowModule(t) }}</td>
+              <td><Badge :value="t.risk || ''" /></td>
+              <td><Badge :value="t.reviewStatus || ''" /></td>
+              <td>{{ fmtDate(t.updatedAt) }}</td>
+            </tr>
+            <tr v-if="!recent.length">
+              <td colspan="6" style="text-align: center; color: #9a9e94">暂无任务，从 AI 测试助手发起第一个分析吧</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</template>

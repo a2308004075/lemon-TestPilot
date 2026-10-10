@@ -1,232 +1,271 @@
 <template>
   <div class="page">
-    <h2 class="page-title">{{ cfg.title }}</h2>
-    <p class="page-desc">{{ cfg.desc }}</p>
+    <!-- 页头 -->
+    <div class="page-intro">
+      <div>
+        <h2>{{ cfg.title }}</h2>
+        <p>{{ cfg.desc }}</p>
+      </div>
+      <div class="page-actions">
+        <button class="button primary" @click="tab = 'create'"><Plus /> 新建分析</button>
+      </div>
+    </div>
 
-    <el-tabs v-model="tab">
-      <!-- Tab 1: 新建分析 -->
-      <el-tab-pane label="新建分析" name="create">
-        <el-row :gutter="12">
-          <el-col :span="16">
-            <el-card shadow="never">
-              <div class="card-title"><el-icon color="#e6a23c"><EditPen /></el-icon>{{ cfg.formTitle }}</div>
-              <el-form label-width="90px">
-                <el-form-item label="任务标题" required>
-                  <el-input v-model="form.title" placeholder="一句话概括问题" />
-                </el-form-item>
-                <el-row :gutter="10">
-                  <el-col :span="8">
-                    <el-form-item label="所属模块">
-                      <el-cascader v-model="modulePath" :options="moduleOptions" placeholder="项目/模块/子模块"
-                                   clearable style="width: 100%" />
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="风险等级">
-                      <el-select v-model="form.risk" style="width: 100%">
-                        <el-option label="P0（资损/主流程）" value="P0" />
-                        <el-option label="P1（功能异常）" value="P1" />
-                        <el-option label="P2（体验问题）" value="P2" />
-                      </el-select>
-                    </el-form-item>
-                  </el-col>
-                </el-row>
-                <el-form-item label="问题上下文" required>
-                  <el-input v-model="form.context" type="textarea" :rows="9"
-                            :placeholder="cfg.placeholder" />
-                </el-form-item>
-                <el-form-item>
-                  <el-button size="small" @click="loadExample">载入示例</el-button>
-                  <el-button type="warning" class="tp-btn-primary" :loading="submitting" @click="submit">
-                    发起{{ cfg.shortName }}
-                  </el-button>
-                </el-form-item>
-              </el-form>
+    <div class="tabs">
+      <button :class="{ active: tab === 'create' }" @click="tab = 'create'">新建分析</button>
+      <button :class="{ active: tab === 'tasks' }" @click="tab = 'tasks'">任务列表</button>
+      <button :class="{ active: tab === 'kb' }" @click="tab = 'kb'">已入库经验</button>
+    </div>
 
-              <!-- 分析结果 -->
-              <template v-if="result">
-                <el-divider content-position="left">分析结果</el-divider>
-                <div class="result-meta">
-                  <el-tag size="small" :type="result.status === '已完成' ? 'success' : 'warning'">{{ result.status }}</el-tag>
-                  <el-tag size="small" type="info">完整度 {{ result.completeness }}%</el-tag>
-                  <el-tag size="small" type="info">引擎：{{ result.engineMode === 'llm' ? 'LLM' : '规则' }}</el-tag>
-                  <span class="result-no">{{ result.taskNo }}</span>
-                </div>
-                <div v-if="missingList.length" class="result-missing">
-                  缺项提示：
-                  <el-tag v-for="m in missingList" :key="m" size="small" type="danger" effect="plain">{{ m }}</el-tag>
-                </div>
-                <pre class="tp-json">{{ JSON.stringify(resultOutput, null, 2) }}</pre>
-                <div class="review-bar">
-                  <el-button @click="review('reject')">驳回补充</el-button>
-                  <el-button type="warning" class="tp-btn-primary" @click="review('approve')">确认通过</el-button>
-                  <el-tag v-if="result.reviewStatus !== '待复核'" size="small"
-                          :type="result.reviewStatus === '通过' ? 'success' : 'danger'">
-                    {{ result.reviewStatus }}
-                  </el-tag>
-                </div>
-              </template>
-            </el-card>
-          </el-col>
-
-          <!-- 右侧：输入完整度 + 输出结构说明 -->
-          <el-col :span="8">
-            <el-card shadow="never" class="mb12">
-              <div class="card-title"><el-icon color="#e6a23c"><DataLine /></el-icon>输入完整度</div>
-              <el-progress :percentage="completeness" :stroke-width="14"
-                           :color="completeness >= 80 ? '#67c23a' : '#e6a23c'" />
-              <div class="check-missing">
-                <template v-if="missingList.length">
-                  <div class="missing-title">建议补充：</div>
-                  <div v-for="m in missingList" :key="m" class="missing-item">
-                    <el-icon color="#f56c6c"><Warning /></el-icon>{{ m }}
-                  </div>
-                </template>
-                <div v-else-if="form.context" class="ok-text">输入已完整</div>
-                <div v-else class="tip-text">输入上下文后实时检查</div>
-              </div>
-            </el-card>
-            <el-card shadow="never">
-              <div class="card-title"><el-icon color="#e6a23c"><Document /></el-icon>输出结构说明</div>
-              <div v-for="f in cfg.outputFields" :key="f.name" class="field-item">
-                <code class="field-name">{{ f.name }}</code>
-                <span class="field-label">{{ f.label }}</span>
-              </div>
-              <el-alert type="info" :closable="false" class="mt8"
-                        title="安全规则：证据不足时明确标记；不编造知识标题或 Bug 编号；结论需人工复核。" />
-            </el-card>
-          </el-col>
-        </el-row>
-      </el-tab-pane>
-
-      <!-- Tab 2: 任务列表 -->
-      <el-tab-pane :label="cfg.shortName + '任务'" name="tasks">
-        <el-card shadow="never">
-          <div class="search-bar">
-            <el-input v-model="taskQuery.keyword" placeholder="搜索标题 / 上下文" clearable style="width: 260px"
-                      @keyup.enter="loadTasks" @clear="loadTasks" />
-            <el-button type="warning" class="tp-btn-primary" @click="loadTasks">查询</el-button>
+    <!-- 新建分析 -->
+    <div v-if="tab === 'create'" class="two-col" style="margin-top: 18px">
+      <div class="panel">
+        <div class="panel-title">
+          <div>
+            <h3>{{ cfg.formTitle }}</h3>
+            <p>支持粘贴文本，也可逐项补充</p>
           </div>
-          <el-table :data="tasks" stripe class="mt8" v-loading="tasksLoading">
-            <el-table-column prop="taskNo" label="编号" width="130" />
-            <el-table-column prop="title" label="标题" min-width="240" show-overflow-tooltip />
-            <el-table-column label="风险" width="70" align="center">
-              <template #default="{ row }">
-                <span class="tp-risk" :class="'tp-risk-' + row.risk">{{ row.risk }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="完整度" width="150">
-              <template #default="{ row }">
-                <el-progress :percentage="row.completeness" :stroke-width="10"
-                             :color="row.completeness >= 80 ? '#67c23a' : '#e6a23c'" />
-              </template>
-            </el-table-column>
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <span class="tp-status" :class="row.status === '已完成' ? 'tp-status-ok' : 'tp-status-warn'">{{ row.status }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="复核" width="100">
-              <template #default="{ row }">
-                <span class="tp-status" :class="row.reviewStatus === '通过' ? 'tp-status-ok' : row.reviewStatus === '驳回补充' ? 'tp-status-block' : 'tp-status-warn'">{{ row.reviewStatus }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="更新时间" width="165">
-              <template #default="{ row }">{{ (row.updatedAt || '').replace('T', ' ').slice(0, 19) }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="80" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="viewTask(row)">详情</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </el-tab-pane>
+        </div>
+        <div class="field">
+          <span>任务标题<em>*</em></span>
+          <input v-model="form.title" :placeholder="cfg.titlePlaceholder" />
+        </div>
+        <div class="inline-grid">
+          <div class="field">
+            <span>模块</span>
+            <select v-model="modulePath">
+              <option value="">未选择</option>
+              <option v-for="o in moduleOptions" :key="o.value" :value="o.value">{{ o.value }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <span>风险</span>
+            <select v-model="form.risk">
+              <option value="P0">P0</option>
+              <option value="P1">P1</option>
+              <option value="P2">P2</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <span>问题上下文<em>*</em></span>
+          <textarea v-model="form.context" class="large" :placeholder="cfg.placeholder"></textarea>
+        </div>
+        <div class="page-actions" style="margin-bottom: 14px">
+          <button class="button primary" :disabled="submitting" @click="submit">
+            <Sparkles /> {{ submitting ? '分析中…' : '开始分析' }}
+          </button>
+          <label class="button subtle file-button">
+            <Paperclip /> 添加附件
+            <input type="file" @change="onFilePicked" />
+          </label>
+        </div>
+      </div>
 
-      <!-- Tab 3: 已入库经验 -->
-      <el-tab-pane label="已入库经验" name="kb">
-        <el-card shadow="never">
-          <div class="card-title"><el-icon color="#e6a23c"><Collection /></el-icon>{{ cfg.shortName }}相关已入库经验</div>
-          <el-table :data="kbItems" stripe v-loading="kbLoading">
-            <el-table-column prop="kbNo" label="编号" width="100" />
-            <el-table-column prop="title" label="知识标题" min-width="220" show-overflow-tooltip />
-            <el-table-column prop="category" label="分类" width="110" />
-            <el-table-column label="风险" width="70" align="center">
-              <template #default="{ row }">
-                <span class="tp-risk" :class="'tp-risk-' + row.risk">{{ row.risk }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="status" label="状态" width="90" />
-            <el-table-column label="被引用" width="80" align="center">
-              <template #default="{ row }">{{ row.refCount }} 次</template>
-            </el-table-column>
-            <el-table-column prop="sourceTask" label="来源" min-width="130" show-overflow-tooltip />
-          </el-table>
-          <el-empty v-if="!kbLoading && !kbItems.length" description="暂无入库经验" :image-size="80" />
-        </el-card>
-      </el-tab-pane>
-    </el-tabs>
+      <div class="panel">
+        <div class="panel-title">
+          <div>
+            <h3>输入完整度</h3>
+            <p>不会编造缺失内容</p>
+          </div>
+        </div>
+        <div class="score"><strong>{{ completeness }}</strong><span>%</span><small style="font-size: 12px; color: var(--muted); margin-left: 8px">当前输入完整度</small></div>
+        <div class="progress"><i :style="{ width: completeness + '%' }"></i></div>
+        <div class="check-list">
+          <template v-if="!form.context || !form.context.trim()">
+            <div v-for="h in cfg.requiredHints" :key="h">
+              <span><AlertTriangle /></span>
+              <div>{{ h }}<small>建议补充</small></div>
+            </div>
+          </template>
+          <template v-else-if="missingList.length">
+            <div v-for="m in missingList" :key="m">
+              <span><AlertTriangle /></span>
+              <div>{{ m }}<small>建议补充</small></div>
+            </div>
+          </template>
+          <div v-else>
+            <span class="done"><Check /></span>
+            <div>输入完整<small>可直接发起{{ cfg.shortName }}</small></div>
+          </div>
+        </div>
+        <div class="result-preview">
+          <h4>输出结构</h4>
+          <div v-for="f in cfg.outputFields" :key="f"><Check /> {{ f }}</div>
+        </div>
+      </div>
+    </div>
 
-    <!-- 任务详情弹层 -->
-    <el-drawer v-model="taskDetailVisible" :title="taskDetail ? taskDetail.task.taskNo + ' · ' + taskDetail.task.title : ''" size="52%">
-      <template v-if="taskDetail">
-        <el-descriptions :column="3" border size="small" class="mb12">
-          <el-descriptions-item label="风险">
-            <span class="tp-risk" :class="'tp-risk-' + taskDetail.task.risk">{{ taskDetail.task.risk }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="完整度">{{ taskDetail.task.completeness }}%</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ taskDetail.task.status }}</el-descriptions-item>
-          <el-descriptions-item label="复核状态">{{ taskDetail.task.reviewStatus }}</el-descriptions-item>
-          <el-descriptions-item label="引擎">{{ taskDetail.task.engineMode === 'llm' ? 'LLM' : '规则' }}</el-descriptions-item>
-          <el-descriptions-item label="来源">{{ taskDetail.task.source === 'manual' ? '页面发起' : 'AI 助手' }}</el-descriptions-item>
-        </el-descriptions>
-        <h4>问题上下文</h4>
-        <p class="detail-text pre">{{ taskDetail.task.context }}</p>
-        <h4>分析输出</h4>
-        <pre class="tp-json">{{ JSON.stringify(taskDetail.output, null, 2) }}</pre>
-      </template>
-    </el-drawer>
+    <!-- 任务列表 -->
+    <div v-else-if="tab === 'tasks'" class="stack" style="margin-top: 18px">
+      <div class="filterbar">
+        <div class="search">
+          <Search />
+          <input v-model="taskQuery.keyword" placeholder="搜索标题或上下文" @keyup.enter="loadTasks" />
+          <button v-if="taskQuery.keyword" @click="clearKeyword"><X /></button>
+        </div>
+        <span class="summary">共 {{ tasks.length }} 项</span>
+      </div>
+      <div class="panel table-panel">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>任务</th><th>模块</th><th>风险</th><th>状态</th><th>模型</th><th>审核</th><th>知识</th><th>创建时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="t in tasks" :key="t.id" @click="viewTask(t)">
+                <td><strong>{{ t.title }}</strong><small>{{ t.taskNo }}</small></td>
+                <td>{{ moduleText(t) || '未分组' }}</td>
+                <td><Badge :value="t.risk" /></td>
+                <td><Badge :value="t.status" /></td>
+                <td>{{ t.engineMode === 'llm' ? 'LLM' : '规则' }}</td>
+                <td><Badge :value="t.reviewStatus" /></td>
+                <td><Badge :value="t.knowledgeStatus || '未入库'" /></td>
+                <td>{{ fmtDate(t.createdAt) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <Empty v-if="!tasksLoading && !tasks.length" title="暂无分析任务" desc="在「新建分析」发起第一个任务" />
+      </div>
+    </div>
+
+    <!-- 已入库经验 -->
+    <div v-else style="margin-top: 18px">
+      <div v-if="kbItems.length" class="knowledge-cards">
+        <button v-for="k in kbItems" :key="k.id" @click="router.push('/knowledge')">
+          <div class="kb-badges">
+            <Badge :value="k.category" />
+            <Badge :value="k.risk" />
+          </div>
+          <h3>{{ k.title }}</h3>
+          <p>{{ (k.body || '').slice(0, 90) }}</p>
+          <footer>
+            <span>{{ k.moduleName || k.sourceTask }}</span>
+            <ChevronRight />
+          </footer>
+        </button>
+      </div>
+      <Empty v-else title="暂无入库经验" desc="专项任务复核通过后可申请入知识库" />
+    </div>
+
+    <!-- 任务详情抽屉 -->
+    <TDrawer v-if="detailVisible && detail" eyebrow="TASK DETAIL" :title="detail.task.title"
+             :subtitle="detail.task.taskNo" @close="detailVisible = false">
+      <div class="detail-badges">
+        <Badge :value="detail.task.risk" />
+        <Badge :value="detail.task.status" />
+        <Badge :value="detail.task.reviewStatus" />
+        <Badge :value="detail.task.knowledgeStatus || '未入库'" />
+        <span class="wb-id">{{ detail.task.engineMode === 'llm' ? 'LLM' : '规则引擎' }}</span>
+      </div>
+      <div class="detail-grid">
+        <div><span>所属模块</span><strong>{{ moduleText(detail.task) || '未分组' }}</strong></div>
+        <div><span>分析模型</span><strong>{{ detail.task.engineMode === 'llm' ? 'LLM 引擎' : '规则引擎' }}</strong></div>
+        <div><span>创建时间</span><strong>{{ fmtTime(detail.task.createdAt) }}</strong></div>
+        <div><span>知识状态</span><strong>{{ detail.task.knowledgeStatus || '未入库' }}</strong></div>
+      </div>
+      <div class="detail-section">
+        <h3>问题上下文</h3>
+        <pre>{{ detail.task.context }}</pre>
+      </div>
+      <div class="detail-section result-box">
+        <h3>分析结果</h3>
+        <pre v-if="detail.output">{{ JSON.stringify(detail.output, null, 2) }}</pre>
+        <p v-else>暂无结构化输出</p>
+      </div>
+      <div class="drawer-actions">
+        <template v-if="detail.task.reviewStatus === '待复核'">
+          <button class="button" @click="reviewTask('reject')">驳回补充</button>
+          <button class="button primary" @click="reviewTask('approve')">确认通过</button>
+        </template>
+        <span v-else class="wb-status" :class="detail.task.reviewStatus === '通过' ? 'success' : 'danger'">
+          复核{{ detail.task.reviewStatus }}
+        </span>
+        <button v-if="canToKnowledge(detail.task)" class="button dark" @click="toKnowledge(detail.task)">
+          <BookOpen /> 申请入知识库
+        </button>
+      </div>
+      <div class="detail-section">
+        <h3>操作记录</h3>
+        <div v-if="taskAudits.length" class="timeline">
+          <div v-for="a in taskAudits" :key="a.id">
+            <i></i>
+            <span>
+              <strong>{{ a.action }}</strong>
+              <small>{{ fmtTime(a.createdAt) }}{{ a.detail ? ' · ' + a.detail : '' }}</small>
+            </span>
+          </div>
+        </div>
+        <p v-else style="font-size: 12px; color: var(--muted)">暂无操作记录</p>
+      </div>
+    </TDrawer>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  apiTaskCreate, apiTaskCompleteness, apiTasks, apiTaskDetail, apiTaskReview,
-  apiKbTaskSourced, apiCaseModules
+  Plus, Sparkles, Search, X, AlertTriangle, Check, Paperclip, ChevronRight, BookOpen
+} from 'lucide-vue-next'
+import {
+  apiTaskCreate, apiTaskCompleteness, apiTasks, apiTaskDetail, apiTaskReview, apiTaskToKnowledge,
+  apiKbTaskSourced, apiCaseModules, apiAudit
 } from '../../api'
+import { fmtTime, fmtDate } from '../../utils/format'
+import Badge from '../../components/ui/Badge.vue'
+import Empty from '../../components/ui/Empty.vue'
+import TDrawer from '../../components/ui/TDrawer.vue'
 
 const props = defineProps({
   cfg: { type: Object, required: true }
 })
 
+const router = useRouter()
 const tab = ref('create')
 const form = ref({ title: '', context: '', risk: 'P1' })
-const modulePath = ref([])
+const modulePath = ref('')
 const moduleOptions = ref([])
 const completeness = ref(0)
 const missingList = ref([])
 const submitting = ref(false)
-const result = ref(null)
-const resultOutput = ref(null)
 
 const taskQuery = ref({ keyword: '' })
 const tasks = ref([])
 const tasksLoading = ref(false)
-const taskDetailVisible = ref(false)
-const taskDetail = ref(null)
+const detailVisible = ref(false)
+const detail = ref(null)
+const taskAudits = ref([])
 
 const kbItems = ref([])
-const kbLoading = ref(false)
 
-const loadExample = () => {
-  form.value.title = cfg2().exampleTitle
-  form.value.context = cfg2().example
-  ElMessage.success('已载入示例')
+// 申请入知识库前置条件：三类专项任务 + 复核通过 + 尚未入库
+const canToKnowledge = (task) => {
+  if (!task) return false
+  const type = task.taskType || props.cfg.taskType
+  if (!['bug_analysis', 'log_triage', 'sql_analysis'].includes(type)) return false
+  return task.reviewStatus === '通过' && (task.knowledgeStatus || '未入库') === '未入库'
 }
 
-const cfg2 = () => props.cfg
+const moduleText = (t) => [t.projectName, t.moduleName, t.submoduleName].filter(Boolean).join(' / ')
+
+const toKnowledge = async (task) => {
+  const saved = await apiTaskToKnowledge(task.id)
+  ElMessage.success('已生成待审核知识，可在知识库中审核发布')
+  if (detail.value && detail.value.task.id === task.id) {
+    detail.value.task.knowledgeStatus = saved.knowledgeStatus
+    taskAudits.value = await apiAudit({ entityType: 'task', entityNo: saved.taskNo })
+  }
+  loadTasks()
+}
+
+const onFilePicked = () => {
+  ElMessage.info('演示环境：附件不参与分析，请将关键信息粘贴到上下文')
+}
 
 // 实时完整度检查（防抖）
 let debounceTimer = null
@@ -253,10 +292,11 @@ const buildPayload = () => {
     context: form.value.context,
     risk: form.value.risk
   }
-  if (modulePath.value && modulePath.value.length === 3) {
-    payload.projectName = modulePath.value[0]
-    payload.moduleName = modulePath.value[1]
-    payload.submoduleName = modulePath.value[2]
+  if (modulePath.value) {
+    const [projectName, moduleName, submoduleName] = modulePath.value.split(' / ')
+    payload.projectName = projectName
+    payload.moduleName = moduleName || ''
+    payload.submoduleName = submoduleName || ''
   }
   return payload
 }
@@ -273,22 +313,26 @@ const submit = async () => {
   submitting.value = true
   try {
     const task = await apiTaskCreate(buildPayload())
-    result.value = task
-    const detail = await apiTaskDetail(task.id)
-    resultOutput.value = detail.output
-    missingList.value = detail.task.status === '待补充' ? missingList.value : []
     ElMessage.success(`分析完成（${task.taskNo}）`)
-    loadTasks()
+    await loadTasks()
+    tab.value = 'tasks'
+    viewTask(task)
   } finally {
     submitting.value = false
   }
 }
 
-const review = async (action) => {
-  const task = await apiTaskReview(result.value.id, { action, note: '' })
-  result.value.reviewStatus = task.reviewStatus
-  result.value.status = task.status
+const reviewTask = async (action) => {
+  const task = await apiTaskReview(detail.value.task.id, { action, note: '' })
+  detail.value.task.reviewStatus = task.reviewStatus
+  detail.value.task.status = task.status
   ElMessage.success(action === 'approve' ? '已确认通过' : '已驳回补充')
+  taskAudits.value = await apiAudit({ entityType: 'task', entityNo: detail.value.task.taskNo })
+  loadTasks()
+}
+
+const clearKeyword = () => {
+  taskQuery.value.keyword = ''
   loadTasks()
 }
 
@@ -303,17 +347,13 @@ const loadTasks = async () => {
 }
 
 const viewTask = async (row) => {
-  taskDetail.value = await apiTaskDetail(row.id)
-  taskDetailVisible.value = true
+  detail.value = await apiTaskDetail(row.id)
+  detailVisible.value = true
+  taskAudits.value = await apiAudit({ entityType: 'task', entityNo: detail.value.task.taskNo })
 }
 
 const loadKb = async () => {
-  kbLoading.value = true
-  try {
-    kbItems.value = await apiKbTaskSourced({})
-  } finally {
-    kbLoading.value = false
-  }
+  kbItems.value = await apiKbTaskSourced({})
 }
 
 watch(tab, (t) => {
@@ -324,120 +364,16 @@ watch(tab, (t) => {
 onMounted(async () => {
   loadTasks()
   const mods = await apiCaseModules()
-  const projectMap = {}
+  const seen = new Set()
+  const options = []
   for (const m of mods || []) {
-    projectMap[m.project] = projectMap[m.project] || {}
-    projectMap[m.project][m.module] = projectMap[m.project][m.module] || []
-    projectMap[m.project][m.module].push({ value: m.submodule, label: m.submodule })
+    const label = [m.project, m.module, m.submodule].filter(Boolean).join(' / ')
+    if (!seen.has(label)) {
+      seen.add(label)
+      options.push({ value: label, label })
+    }
   }
-  moduleOptions.value = Object.entries(projectMap).map(([p, modsOf]) => ({
-    value: p, label: p,
-    children: Object.entries(modsOf).map(([m, subs]) => ({ value: m, label: m, children: subs }))
-  }))
+  moduleOptions.value = options
+  if (options.length) modulePath.value = options[0].value
 })
 </script>
-
-<style scoped>
-.mb12 {
-  margin-bottom: 12px;
-}
-
-.mt8 {
-  margin-top: 8px;
-}
-
-.search-bar {
-  display: flex;
-  gap: 8px;
-}
-
-.result-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.result-no {
-  color: #909399;
-  font-size: 12px;
-}
-
-.result-missing {
-  margin-bottom: 10px;
-  font-size: 13px;
-  color: #f56c6c;
-}
-
-.review-bar {
-  margin-top: 12px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.check-missing {
-  margin-top: 10px;
-}
-
-.missing-title {
-  font-size: 13px;
-  color: #606266;
-  margin-bottom: 6px;
-}
-
-.missing-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: #f56c6c;
-  padding: 4px 8px;
-  background: #fef0f0;
-  border-radius: 4px;
-  margin-bottom: 6px;
-}
-
-.ok-text {
-  color: var(--tp-pass);
-  font-size: 13px;
-}
-
-.tip-text {
-  color: #909399;
-  font-size: 12px;
-}
-
-.field-item {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  align-items: baseline;
-}
-
-.field-name {
-  background: #2d3239;
-  color: #ffd04b;
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-size: 12px;
-}
-
-.field-label {
-  color: #606266;
-  font-size: 13px;
-}
-
-.detail-text {
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.7;
-  background: #fafafa;
-  border-radius: 6px;
-  padding: 10px 12px;
-}
-
-.detail-text.pre {
-  white-space: pre-line;
-}
-</style>

@@ -1,22 +1,28 @@
 package com.testpilot.service;
 
 import com.testpilot.common.BizException;
+import com.testpilot.common.CryptoService;
 import com.testpilot.entity.SysLlmConfig;
 import com.testpilot.entity.SysModule;
 import com.testpilot.entity.SysOutputTemplate;
+import com.testpilot.entity.SysTaskKbRule;
 import com.testpilot.entity.SysTaskRule;
 import com.testpilot.engine.LlmClient;
 import com.testpilot.engine.TaskTypes;
 import com.testpilot.repository.SysLlmConfigRepository;
 import com.testpilot.repository.SysModuleRepository;
 import com.testpilot.repository.SysOutputTemplateRepository;
+import com.testpilot.repository.SysTaskKbRuleRepository;
 import com.testpilot.repository.SysTaskRuleRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +42,13 @@ public class ConfigService {
     @Autowired
     private SysTaskRuleRepository ruleRepo;
     @Autowired
+    private SysTaskKbRuleRepository kbRuleRepo;
+    @Autowired
     private LlmClient llmClient;
+    @Autowired
+    private CryptoService cryptoService;
+    @Autowired
+    private AuditService auditService;
 
     // ---------------- 项目与模块 ----------------
 
@@ -94,7 +106,38 @@ public class ConfigService {
         m.setSubmoduleName(submodule);
         m.setEnabled(true);
         m.setUpdatedAt(LocalDateTime.now());
-        return moduleRepo.save(m);
+        SysModule saved = moduleRepo.save(m);
+        auditService.record("module", "module_" + saved.getId(), "新增模块",
+                project + " / " + module + " / " + submodule);
+        return saved;
+    }
+
+    /** 编辑三级模块名称（同组合已存在时报友好错误） */
+    public SysModule updateModule(Long id, Map<String, Object> body) {
+        SysModule m = moduleRepo.findById(id)
+                .orElseThrow(() -> new BizException("模块不存在：" + id));
+        if (body.containsKey("project") && !str(body.get("project")).isEmpty()) {
+            m.setProjectName(str(body.get("project")));
+        }
+        if (body.containsKey("module") && !str(body.get("module")).isEmpty()) {
+            m.setModuleName(str(body.get("module")));
+        }
+        if (body.containsKey("submodule") && !str(body.get("submodule")).isEmpty()) {
+            m.setSubmoduleName(str(body.get("submodule")));
+        }
+        if (m.getProjectName().isEmpty() || m.getModuleName().isEmpty() || m.getSubmoduleName().isEmpty()) {
+            throw new BizException("项目、模块、子模块均不能为空");
+        }
+        m.setUpdatedAt(LocalDateTime.now());
+        try {
+            SysModule saved = moduleRepo.save(m);
+            auditService.record("module", "module_" + saved.getId(), "编辑模块",
+                    m.getProjectName() + " / " + m.getModuleName() + " / " + m.getSubmoduleName());
+            return saved;
+        } catch (DataIntegrityViolationException e) {
+            throw new BizException("该三级模块已存在：" + m.getProjectName() + " / "
+                    + m.getModuleName() + " / " + m.getSubmoduleName());
+        }
     }
 
     /** 启用 / 停用（停用后不再出现在新建表单中） */
@@ -103,17 +146,21 @@ public class ConfigService {
                 .orElseThrow(() -> new BizException("模块不存在：" + id));
         m.setEnabled(!Boolean.TRUE.equals(m.getEnabled()));
         m.setUpdatedAt(LocalDateTime.now());
-        return moduleRepo.save(m);
+        SysModule saved = moduleRepo.save(m);
+        auditService.record("module", "module_" + saved.getId(),
+                Boolean.TRUE.equals(saved.getEnabled()) ? "启用模块" : "停用模块",
+                saved.getProjectName() + " / " + saved.getModuleName() + " / " + saved.getSubmoduleName());
+        return saved;
     }
 
     // ---------------- 大模型 ----------------
 
     public List<SysLlmConfig> llmList() {
         List<SysLlmConfig> result = llmRepo.findAllByOrderByIdAsc();
-        // 不回传完整 API Key，只回传掩码
+        // 不回传完整 API Key，只回传掩码（掩码基于解密原文）
         for (SysLlmConfig cfg : result) {
             if (cfg.getApiKey() != null && !cfg.getApiKey().isEmpty()) {
-                cfg.setApiKey(maskKey(cfg.getApiKey()));
+                cfg.setApiKey(maskKey(cryptoService.decrypt(cfg.getApiKey())));
             }
         }
         return result;
@@ -130,9 +177,9 @@ public class ConfigService {
         }
         if (body.containsKey("apiKey")) {
             String key = str(body.get("apiKey"));
-            // 掩码值或空值不覆盖已保存的 Key
+            // 掩码值或空值不覆盖已保存的 Key；新 Key 加密后入库
             if (!key.isEmpty() && !key.contains("*")) {
-                cfg.setApiKey(key);
+                cfg.setApiKey(cryptoService.encrypt(key));
             } else if (key.isEmpty()) {
                 cfg.setApiKey("");
             }
@@ -155,8 +202,10 @@ public class ConfigService {
         }
         cfg.setUpdatedAt(LocalDateTime.now());
         SysLlmConfig saved = llmRepo.save(cfg);
+        auditService.record("llm", saved.getVendorCode(), "保存模型配置",
+                saved.getVendorName() + (Boolean.TRUE.equals(saved.getEnabled()) ? " · 已启用" : " · 未启用"));
         if (saved.getApiKey() != null && !saved.getApiKey().isEmpty()) {
-            saved.setApiKey(maskKey(saved.getApiKey()));
+            saved.setApiKey(maskKey(cryptoService.decrypt(saved.getApiKey())));
         }
         return saved;
     }
@@ -164,7 +213,10 @@ public class ConfigService {
     public Map<String, Object> llmTest(Long id) {
         SysLlmConfig cfg = llmRepo.findById(id)
                 .orElseThrow(() -> new BizException("厂商配置不存在：" + id));
-        return llmClient.testConnection(cfg);
+        Map<String, Object> result = llmClient.testConnection(cfg);
+        auditService.record("llm", cfg.getVendorCode(), "连接测试",
+                cfg.getVendorName() + " · " + (Boolean.TRUE.equals(result.get("ok")) ? "成功" : "失败"));
+        return result;
     }
 
     private static String maskKey(String key) {
@@ -256,6 +308,51 @@ public class ConfigService {
             rule.setSortOrder(parseInt(body.get("sortOrder"), rule.getSortOrder()));
         }
         return ruleRepo.save(rule);
+    }
+
+    // ---------------- 任务与知识关联 ----------------
+
+    /** 配置页任务展示顺序（与手册一致） */
+    private static final List<String> KB_RULE_ORDER = Arrays.asList(
+            TaskTypes.TESTCASE_GEN, TaskTypes.BUG_ANALYSIS, TaskTypes.LOG_TRIAGE,
+            TaskTypes.SQL_ANALYSIS, TaskTypes.REGRESSION_LIST, TaskTypes.TEST_REPORT);
+
+    public List<Map<String, Object>> kbRules() {
+        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+        for (String main : KB_RULE_ORDER) {
+            List<String> categories = new ArrayList<String>();
+            for (SysTaskKbRule row : kbRuleRepo.findByMainTaskTypeOrderBySortOrderAsc(main)) {
+                if (Boolean.TRUE.equals(row.getEnabled())) {
+                    categories.add(row.getCategory());
+                }
+            }
+            Map<String, Object> group = new LinkedHashMap<String, Object>();
+            group.put("mainTaskType", main);
+            group.put("mainTaskName", TaskTypes.nameOf(main));
+            group.put("categories", categories);
+            result.add(group);
+        }
+        return result;
+    }
+
+    /** 保存任务的知识分类关联（全量覆盖该任务的配置） */
+    @Transactional
+    public List<SysTaskKbRule> saveKbRule(String mainTaskType, List<String> categories) {
+        if (!TaskTypes.isValid(mainTaskType)) {
+            throw new BizException("未知任务类型：" + mainTaskType);
+        }
+        kbRuleRepo.deleteByMainTaskType(mainTaskType);
+        List<SysTaskKbRule> saved = new ArrayList<SysTaskKbRule>();
+        int sort = 1;
+        for (String category : categories) {
+            SysTaskKbRule row = new SysTaskKbRule();
+            row.setMainTaskType(mainTaskType);
+            row.setCategory(category);
+            row.setSortOrder(sort++);
+            row.setEnabled(true);
+            saved.add(kbRuleRepo.save(row));
+        }
+        return saved;
     }
 
     private static int parseInt(Object value, int fallback) {

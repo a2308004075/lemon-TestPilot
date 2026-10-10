@@ -1,220 +1,37 @@
-<template>
-  <div class="page">
-    <h2 class="page-title">用例库</h2>
-    <p class="page-desc">三级模块组织的用例资产：优先级徽章、版本、复制与编辑升版，支持从需求上下文智能生成草稿。</p>
-
-    <el-row :gutter="12">
-      <!-- 左侧模块树 -->
-      <el-col :span="6">
-        <el-card shadow="never" class="tree-card">
-          <div class="card-title"><el-icon color="#e6a23c"><FolderOpened /></el-icon>模块（{{ total }} 条用例）</div>
-          <el-tree :data="tree" node-key="name" default-expand-all :expand-on-click-node="false"
-                   @node-click="onTreeNodeClick">
-            <template #default="{ data }">
-              <span class="tree-node">
-                <span>{{ data.name }}</span>
-                <el-tag size="small" type="info" effect="plain">{{ data.count }}</el-tag>
-              </span>
-            </template>
-          </el-tree>
-        </el-card>
-      </el-col>
-
-      <!-- 右侧列表 -->
-      <el-col :span="18">
-        <el-card shadow="never" class="mb12">
-          <div class="search-bar">
-            <el-input v-model="query.keyword" placeholder="搜索标题 / 步骤" clearable style="width: 220px"
-                      @keyup.enter="load" @clear="load" />
-            <el-select v-model="query.priority" placeholder="优先级" clearable style="width: 110px" @change="load">
-              <el-option v-for="p in ['P0', 'P1', 'P2']" :key="p" :label="p" :value="p" />
-            </el-select>
-            <el-select v-model="query.status" placeholder="状态" clearable style="width: 110px" @change="load">
-              <el-option v-for="s in ['未执行', '通过', '失败', '阻塞']" :key="s" :label="s" :value="s" />
-            </el-select>
-            <div class="spacer" />
-            <el-button type="warning" class="tp-btn-primary" @click="openGenerate">智能生成</el-button>
-            <el-button type="warning" plain @click="openCreate">新增用例</el-button>
-          </div>
-        </el-card>
-
-        <el-card shadow="never">
-          <el-table :data="rows" stripe v-loading="loading">
-            <el-table-column prop="caseNo" label="编号" width="100" />
-            <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
-            <el-table-column label="模块" min-width="160">
-              <template #default="{ row }">{{ shortModule(row) }}</template>
-            </el-table-column>
-            <el-table-column label="优先级" width="80" align="center">
-              <template #default="{ row }">
-                <span class="tp-risk" :class="'tp-risk-' + row.priority">{{ row.priority }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="type" label="类型" width="80" />
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <span class="tp-status" :class="statusClass(row.status)">{{ row.status }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="版本" width="70" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" effect="plain">v{{ row.version }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="linkedBugNo" label="关联Bug" width="100" />
-            <el-table-column label="操作" width="130" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
-                <el-button link type="primary" size="small" @click="copyCase(row)">复制</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <div class="pager">
-            <el-pagination v-model:current-page="query.page" :page-size="query.size" :total="total"
-                           layout="total, prev, pager, next" @current-change="load" />
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <!-- 新增 / 编辑弹窗 -->
-    <el-dialog v-model="formVisible" :title="editId ? '编辑用例（保存后升版）' : '新增用例'" width="680px" destroy-on-close>
-      <el-form :model="form" label-width="90px">
-        <el-form-item label="标题" required>
-          <el-input v-model="form.title" placeholder="用例标题" />
-        </el-form-item>
-        <el-row :gutter="10">
-          <el-col :span="8">
-            <el-form-item label="项目">
-              <el-input v-model="form.projectName" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="模块">
-              <el-input v-model="form.moduleName" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="子模块">
-              <el-input v-model="form.submoduleName" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="10">
-          <el-col :span="8">
-            <el-form-item label="优先级">
-              <el-select v-model="form.priority" style="width: 100%">
-                <el-option v-for="p in ['P0', 'P1', 'P2']" :key="p" :label="p" :value="p" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="类型">
-              <el-select v-model="form.type" style="width: 100%">
-                <el-option v-for="t in ['功能', '异常', '边界', '性能', '安全']" :key="t" :label="t" :value="t" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="关联Bug">
-              <el-input v-model="form.linkedBugNo" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="前置条件">
-          <el-input v-model="form.preconditions" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="测试步骤">
-          <el-input v-model="form.steps" type="textarea" :rows="4" placeholder="每行一步" />
-        </el-form-item>
-        <el-form-item label="预期结果">
-          <el-input v-model="form.expected" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="测试数据">
-          <el-input v-model="form.testData" type="textarea" :rows="2" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="formVisible = false">取消</el-button>
-        <el-button type="warning" class="tp-btn-primary" @click="save">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 智能生成弹窗 -->
-    <el-dialog v-model="genVisible" title="智能生成用例草稿" width="720px" destroy-on-close>
-      <el-form label-width="90px">
-        <el-form-item label="需求上下文" required>
-          <el-input v-model="genContext" type="textarea" :rows="6"
-                    placeholder="粘贴需求描述 / 问题上下文，引擎将拆解测试点并覆盖正常、异常、边界场景生成结构化用例草稿" />
-        </el-form-item>
-      </el-form>
-      <div class="gen-actions">
-        <el-button type="warning" class="tp-btn-primary" :loading="generating" @click="generate">生成草稿</el-button>
-        <span class="gen-tip">草稿不直接入库，逐条确认后保存</span>
-      </div>
-      <el-divider v-if="drafts.length" content-position="left">草稿（{{ drafts.length }} 条）</el-divider>
-      <div v-for="(d, i) in drafts" :key="i" class="draft-item">
-        <div class="draft-head">
-          <span class="tp-risk" :class="'tp-risk-' + d.priority">{{ d.priority }}</span>
-          <span class="draft-title">{{ d.title }}</span>
-          <el-button size="small" type="warning" plain @click="saveDraft(d)">入库</el-button>
-        </div>
-        <div class="draft-body">
-          <div v-if="d.preconditions"><b>前置：</b>{{ d.preconditions }}</div>
-          <div><b>步骤：</b><span style="white-space: pre-line">{{ d.steps }}</span></div>
-          <div><b>预期：</b>{{ d.expected }}</div>
-        </div>
-      </div>
-    </el-dialog>
-
-    <!-- 详情抽屉 -->
-    <el-drawer v-model="detailVisible" :title="detail ? detail.caseNo + ' · ' + detail.title : ''" size="46%">
-      <template v-if="detail">
-        <el-descriptions :column="2" border size="small" class="mb12">
-          <el-descriptions-item label="优先级">
-            <span class="tp-risk" :class="'tp-risk-' + detail.priority">{{ detail.priority }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="类型">{{ detail.type }}</el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <span class="tp-status" :class="statusClass(detail.status)">{{ detail.status }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="版本">v{{ detail.version }}</el-descriptions-item>
-          <el-descriptions-item label="模块" :span="2">{{ detail.projectName }} / {{ detail.moduleName }} / {{ detail.submoduleName }}</el-descriptions-item>
-          <el-descriptions-item label="关联Bug" :span="2">{{ detail.linkedBugNo || '无' }}</el-descriptions-item>
-        </el-descriptions>
-        <h4>前置条件</h4>
-        <p class="detail-text">{{ detail.preconditions || '无' }}</p>
-        <h4>测试步骤</h4>
-        <p class="detail-text pre">{{ detail.steps || '无' }}</p>
-        <h4>预期结果</h4>
-        <p class="detail-text">{{ detail.expected || '无' }}</p>
-        <h4 v-if="detail.testData">测试数据</h4>
-        <p v-if="detail.testData" class="detail-text">{{ detail.testData }}</p>
-        <div class="detail-actions">
-          <el-button @click="copyCase(detail)">复制用例</el-button>
-          <el-button type="warning" plain @click="openEdit(detail)">编辑（升版）</el-button>
-        </div>
-      </template>
-    </el-drawer>
-  </div>
-</template>
-
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import * as XLSX from 'xlsx'
 import {
-  apiCases, apiCaseTree, apiCaseCreate, apiCaseUpdate, apiCaseCopy, apiCaseGenerateDrafts
+  Download, Plus, Search, Archive, Layers3, Check, ChevronDown, ChevronRight,
+  ListChecks, Sparkles
+} from 'lucide-vue-next'
+import Badge from '../components/ui/Badge.vue'
+import Empty from '../components/ui/Empty.vue'
+import TPagination from '../components/ui/TPagination.vue'
+import TDrawer from '../components/ui/TDrawer.vue'
+import TModal from '../components/ui/TModal.vue'
+import {
+  apiCases, apiCaseTree, apiCaseModules, apiCaseCreate, apiCaseUpdate, apiCaseCopy,
+  apiCaseGenerateDrafts, apiAudit
 } from '../api'
+import { fmtTime, fmtDate } from '../utils/format'
 
-const query = ref({ keyword: '', priority: '', status: '', moduleName: '', submoduleName: '', page: 1, size: 10 })
+const router = useRouter()
+const tab = ref('library')
+const query = ref({ keyword: '', priority: '', status: '', moduleName: '', submoduleName: '', page: 1, size: 20 })
 const rows = ref([])
 const total = ref(0)
-const loading = ref(false)
 const tree = ref([])
+const treeOpen = ref({})
+const selection = ref([])
+const moduleOptions = ref([])
 
 const formVisible = ref(false)
 const editId = ref(null)
 const form = ref({})
+const modulePath = ref('')
 
 const genVisible = ref(false)
 const genContext = ref('')
@@ -223,76 +40,96 @@ const drafts = ref([])
 
 const detailVisible = ref(false)
 const detail = ref(null)
+const audits = ref([])
 
-const statusClass = (s) => s === '通过' ? 'tp-status-ok' : s === '失败' || s === '阻塞' ? 'tp-status-block' : 'tp-status-info'
+const p0Count = computed(() => rows.value.filter((r) => r.priority === 'P0').length)
+const allSelected = computed(() => rows.value.length > 0 && selection.value.length === rows.value.length)
 
-const shortModule = (row) => {
-  const parts = [row.moduleName, row.submoduleName].filter(Boolean)
-  return parts.join(' / ') || '未分组'
-}
+const shortModule = (row) => [row.moduleName, row.submoduleName].filter(Boolean).join(' / ') || '未分组'
+const stepsCount = (row) => (row.steps || '').split('\n').map((s) => s.trim()).filter(Boolean).length
 
 const load = async () => {
-  loading.value = true
-  try {
-    const data = await apiCases(query.value)
-    rows.value = data.list || []
-    total.value = data.total || 0
-  } finally {
-    loading.value = false
+  const data = await apiCases(query.value)
+  rows.value = data.list || []
+  total.value = data.total || 0
+}
+
+// 模块树按条目数降序排列（与手册一致：数据多的项目在前）
+const sortTree = (nodes) => {
+  ;(nodes || []).sort((a, b) => (b.count || 0) - (a.count || 0))
+  for (const n of nodes || []) {
+    sortTree(n.modules)
+    sortTree(n.submodules)
   }
+  return nodes
 }
 
 const loadTree = async () => {
-  tree.value = await apiCaseTree()
+  tree.value = sortTree(await apiCaseTree())
 }
 
-const onTreeNodeClick = (node) => {
-  query.value.moduleName = ''
-  query.value.submoduleName = ''
-  const level = getNodeLevel(node)
-  if (level === 1) {
-    // 项目级：不清模块（仅项目分组）
-  } else if (level === 2) {
-    query.value.moduleName = node.name
-  } else if (level === 3) {
-    query.value.submoduleName = node.name
-    // 找父模块
-    for (const p of tree.value) {
-      for (const m of p.modules || []) {
-        if ((m.submodules || []).some((s) => s.name === node.name)) {
-          query.value.moduleName = m.name
-        }
-      }
-    }
+const nodeOpen = (key) => treeOpen.value[key] !== false
+const toggleNode = (key) => {
+  treeOpen.value = { ...treeOpen.value, [key]: !nodeOpen(key) }
+}
+const collapseAll = () => {
+  const closed = {}
+  tree.value.forEach((p) => {
+    closed[p.name] = false
+    ;(p.modules || []).forEach((m) => { closed[`${p.name}/${m.name}`] = false })
+  })
+  treeOpen.value = closed
+}
+
+const onLeafClick = (moduleName, subName) => {
+  query.value.moduleName = moduleName
+  query.value.submoduleName = subName
+  query.value.page = 1
+  load()
+}
+
+const onModuleSelect = () => {
+  const parts = (query.value.modulePath || '').split(' / ')
+  if (!query.value.modulePath) {
+    query.value.moduleName = ''
+    query.value.submoduleName = ''
+  } else {
+    query.value.moduleName = parts[1] || ''
+    query.value.submoduleName = parts[2] || ''
   }
   query.value.page = 1
   load()
 }
 
-const getNodeLevel = (node) => {
-  if (node.submodules) return node.modules ? 1 : 2
-  return 3
+const toggleRow = (row) => {
+  const id = row.id
+  selection.value = selection.value.some((r) => r.id === id)
+    ? selection.value.filter((r) => r.id !== id)
+    : [...selection.value, row]
+}
+const toggleAll = () => {
+  selection.value = allSelected.value ? [] : [...rows.value]
 }
 
 const emptyForm = () => ({
-  title: '', projectName: '电商平台', moduleName: '', submoduleName: '',
-  priority: 'P1', type: '功能', preconditions: '', steps: '', expected: '', testData: '', linkedBugNo: ''
+  title: '', priority: 'P1', type: '功能', preconditions: '', steps: '', expected: '', testData: '', linkedBugNo: ''
 })
 
 const openCreate = () => {
+  tab.value = 'new'
   editId.value = null
   form.value = emptyForm()
-  formVisible.value = true
+  modulePath.value = ''
 }
 
 const openEdit = (row) => {
   editId.value = row.id
   form.value = {
-    title: row.title, projectName: row.projectName, moduleName: row.moduleName,
-    submoduleName: row.submoduleName, priority: row.priority, type: row.type,
+    title: row.title, priority: row.priority, type: row.type,
     preconditions: row.preconditions, steps: row.steps, expected: row.expected,
     testData: row.testData, linkedBugNo: row.linkedBugNo
   }
+  modulePath.value = [row.projectName, row.moduleName, row.submoduleName].filter(Boolean).join(' / ')
   detailVisible.value = false
   formVisible.value = true
 }
@@ -302,14 +139,26 @@ const save = async () => {
     ElMessage.warning('请填写用例标题')
     return
   }
+  if (!modulePath.value) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+  const parts = modulePath.value.split(' / ')
+  const payload = {
+    ...form.value,
+    projectName: parts[0] || '',
+    moduleName: parts[1] || '',
+    submoduleName: parts[2] || ''
+  }
   if (editId.value) {
-    const saved = await apiCaseUpdate(editId.value, form.value)
+    const saved = await apiCaseUpdate(editId.value, payload)
     ElMessage.success(`已保存并升版至 v${saved.version}`)
   } else {
-    await apiCaseCreate(form.value)
+    await apiCaseCreate(payload)
     ElMessage.success('用例已入库')
   }
   formVisible.value = false
+  tab.value = 'library'
   await load()
   await loadTree()
 }
@@ -334,18 +183,19 @@ const generate = async () => {
   generating.value = true
   try {
     drafts.value = await apiCaseGenerateDrafts({ context: genContext.value })
-    if (!drafts.value.length) {
-      ElMessage.info('未生成草稿，请补充上下文')
-    }
+    if (!drafts.value.length) ElMessage.info('未生成草稿，请补充上下文')
   } finally {
     generating.value = false
   }
 }
 
 const saveDraft = async (d) => {
+  const parts = (d.modulePath || d.moduleName || '').split(' / ')
   await apiCaseCreate({
-    title: d.title, projectName: '电商平台', moduleName: d.moduleName || '',
-    submoduleName: d.submoduleName || '', priority: d.priority || 'P1', type: d.type || '功能',
+    title: d.title, projectName: '电商平台',
+    moduleName: parts[parts.length - 2] || d.moduleName || '',
+    submoduleName: parts[parts.length - 1] || d.submoduleName || '',
+    priority: d.priority || 'P1', type: d.type || '功能',
     preconditions: d.preconditions || '', steps: d.steps || '',
     expected: d.expected || '', testData: d.testData || '', linkedBugNo: ''
   })
@@ -355,102 +205,387 @@ const saveDraft = async (d) => {
   await loadTree()
 }
 
-const openDetail = (row) => {
+const openDetail = async (row) => {
   detail.value = row
   detailVisible.value = true
+  audits.value = await apiAudit({ entityType: 'case', entityNo: row.caseNo })
 }
 
-onMounted(() => {
-  load()
-  loadTree()
+const exportCases = (format, items) => {
+  const list = items && items.length ? items : rows.value
+  if (!list.length) {
+    ElMessage.info('没有可导出的用例')
+    return
+  }
+  const data = list.map((c) => ({
+    编号: c.caseNo, 标题: c.title, 项目: c.projectName, 模块: c.moduleName,
+    子模块: c.submoduleName, 优先级: c.priority, 类型: c.type, 状态: c.status,
+    版本: 'v' + c.version, 关联Bug: c.linkedBugNo, 前置条件: c.preconditions || '',
+    测试步骤: c.steps || '', 预期结果: c.expected || '', 测试数据: c.testData || ''
+  }))
+  const sheet = XLSX.utils.json_to_sheet(data)
+  const filename = `用例库_${list.length}条`
+  if (format === 'xlsx') {
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, sheet, '用例库')
+    XLSX.writeFile(wb, `${filename}.xlsx`)
+  } else if (format === 'csv') {
+    downloadBlob(new Blob(['\ufeff' + XLSX.utils.sheet_to_csv(sheet)], { type: 'text/csv;charset=utf-8' }), `${filename}.csv`)
+  } else {
+    downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' }), `${filename}.json`)
+  }
+  ElMessage.success(`已导出 ${list.length} 条用例（${format.toUpperCase()}）`)
+}
+
+const downloadBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+const bulkCreateRun = () => ElMessage.success('已创建用例执行任务，执行结果会按批次归档到「执行记录」')
+const bulkJointAnalysis = () => ElMessage.success('已带入 Bug 联合分析')
+
+onMounted(async () => {
+  await Promise.all([load(), loadTree()])
+  const mods = await apiCaseModules()
+  moduleOptions.value = (mods || []).map((m) => `${m.project} / ${m.module} / ${m.submodule}`)
 })
 </script>
 
-<style scoped>
-.mb12 {
-  margin-bottom: 12px;
-}
+<template>
+  <div class="page stack">
+    <div class="page-intro">
+      <div>
+        <h2>测试用例资产库</h2>
+        <p>按项目、模块、子模块组织，可编辑、执行、关联 Bug、生成回归与报告。</p>
+      </div>
+      <div class="page-actions">
+        <button class="button" @click="exportCases('xlsx')"><Download />导出 XLSX</button>
+        <button class="button primary" @click="openCreate"><Plus />新增用例</button>
+      </div>
+    </div>
 
-.tree-card {
-  min-height: 400px;
-}
+    <div class="tabs">
+      <button :class="{ active: tab === 'library' }" @click="tab = 'library'">用例库</button>
+      <button :class="{ active: tab === 'new' }" @click="openCreate">新增 / 智能生成</button>
+      <button :class="{ active: tab === 'execution' }" @click="tab = 'execution'">执行记录</button>
+    </div>
 
-.tree-node {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  padding-right: 8px;
-}
+    <template v-if="tab === 'library'">
+      <div class="filterbar">
+        <label class="search">
+          <Search />
+          <input v-model="query.keyword" placeholder="搜索编号、标题或关键词" @keyup.enter="query.page = 1; load()">
+        </label>
+        <select v-model="query.modulePath" @change="onModuleSelect">
+          <option value="">全部模块</option>
+          <option v-for="m in moduleOptions" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <select v-model="query.priority" @change="query.page = 1; load()">
+          <option value="">全部优先级</option>
+          <option>P0</option>
+          <option>P1</option>
+          <option>P2</option>
+        </select>
+        <button class="button" @click="collapseAll"><Layers3 />全部收起</button>
+      </div>
 
-.search-bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
+      <div v-if="selection.length" class="bulkbar">
+        <strong>已选 {{ selection.length }} 条</strong>
+        <button @click="bulkCreateRun">创建执行</button>
+        <button @click="bulkJointAnalysis">联合分析</button>
+        <button @click="router.push('/regression')">生成回归</button>
+        <button @click="router.push('/reports')">生成报告</button>
+        <button @click="exportCases('csv', selection)">下载 CSV</button>
+        <button @click="selection = []">清空选择</button>
+      </div>
 
-.spacer {
-  flex: 1;
-}
+      <div class="case-layout">
+        <aside class="panel module-tree">
+          <div class="panel-title">
+            <div>
+              <h3>模块树</h3>
+              <p>显示当前筛选数据</p>
+            </div>
+          </div>
+          <div v-for="p in tree" :key="p.name" class="tree-node">
+            <button @click="toggleNode(p.name)">
+              <ChevronDown :class="{ closed: !nodeOpen(p.name) }" />
+              <strong>{{ p.name }}</strong>
+              <b>{{ p.count }}</b>
+            </button>
+            <div v-if="nodeOpen(p.name)">
+              <div v-for="m in p.modules || []" :key="m.name" class="tree-node">
+                <button @click="toggleNode(`${p.name}/${m.name}`)">
+                  <ChevronDown :class="{ closed: !nodeOpen(`${p.name}/${m.name}`) }" />
+                  <strong>{{ m.name }}</strong>
+                  <b>{{ m.count }}</b>
+                </button>
+                <div v-if="nodeOpen(`${p.name}/${m.name}`)">
+                  <button v-for="s in m.submodules || []" :key="s.name" class="tree-leaf" @click="onLeafClick(m.name, s.name)">
+                    <span>{{ s.name }}</span>
+                    <b>{{ s.count }}</b>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
 
-.pager {
-  margin-top: 12px;
-  display: flex;
-  justify-content: flex-end;
-}
+        <section class="panel table-panel">
+          <div class="table-summary">
+            <span>共 <strong>{{ total }}</strong> 条 · P0 <strong class="danger-text">{{ p0Count }}</strong></span>
+            <button class="icon-button" title="备份 JSON" @click="exportCases('json')"><Archive /></button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 36px">
+                    <input type="checkbox" :checked="allSelected" @click.prevent="toggleAll">
+                  </th>
+                  <th>用例</th>
+                  <th>模块</th>
+                  <th>优先级</th>
+                  <th>类型</th>
+                  <th>步骤</th>
+                  <th>状态</th>
+                  <th>生成日期</th>
+                  <th>版本</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="c in rows" :key="c.id" @click="openDetail(c)">
+                  <td style="cursor: default" @click.stop>
+                    <input type="checkbox" :checked="selection.some((r) => r.id === c.id)" @change="toggleRow(c)">
+                  </td>
+                  <td>
+                    <strong>{{ c.title }}</strong>
+                    <small class="id">{{ c.caseNo }}</small>
+                  </td>
+                  <td>{{ shortModule(c) }}</td>
+                  <td><Badge :value="c.priority" /></td>
+                  <td>{{ c.type }}</td>
+                  <td>{{ stepsCount(c) }}</td>
+                  <td><Badge :value="c.status" /></td>
+                  <td>{{ fmtDate(c.createdAt) }}</td>
+                  <td>v{{ c.version }}</td>
+                </tr>
+                <tr v-if="!rows.length">
+                  <td colspan="9" style="text-align: center; color: #9a9e94; cursor: default">没有匹配的用例</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <TPagination v-model:page="query.page" v-model:page-size="query.size" :total="total" @update:page="load" @update:page-size="load" />
+        </section>
+      </div>
+    </template>
 
-.gen-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+    <section v-else-if="tab === 'new'" class="panel smart-panel">
+      <div class="panel-title">
+        <div>
+          <h3>新增测试用例</h3>
+          <p>保存后自动进入当前模块</p>
+        </div>
+        <button class="button" @click="openGenerate"><Sparkles />AI 智能生成</button>
+      </div>
+      <div class="form-grid">
+        <label class="field full">
+          <span>用例标题<em>*</em></span>
+          <input v-model="form.title" placeholder="清晰描述验证目标">
+        </label>
+        <label class="field">
+          <span>模块<em>*</em></span>
+          <select v-model="modulePath">
+            <option value="">请选择项目 / 模块 / 子模块</option>
+            <option v-for="m in moduleOptions" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>优先级</span>
+          <select v-model="form.priority">
+            <option>P0</option>
+            <option>P1</option>
+            <option>P2</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>用例类型</span>
+          <select v-model="form.type">
+            <option>功能</option>
+            <option>接口</option>
+            <option>异常</option>
+            <option>边界</option>
+            <option>性能</option>
+            <option>安全</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>关联 Bug</span>
+          <input v-model="form.linkedBugNo" placeholder="如 BUG-20260901-001，可留空">
+        </label>
+        <label class="field full">
+          <span>前置条件</span>
+          <textarea v-model="form.preconditions" />
+        </label>
+        <label class="field full">
+          <span>测试步骤（每行一步）<em>*</em></span>
+          <textarea v-model="form.steps" placeholder="1. 准备数据&#10;2. 执行操作&#10;3. 检查结果" />
+        </label>
+        <label class="field full">
+          <span>预期结果<em>*</em></span>
+          <textarea v-model="form.expected" />
+        </label>
+        <label class="field full">
+          <span>测试数据</span>
+          <textarea v-model="form.testData" />
+        </label>
+      </div>
+      <button class="button primary" @click="save"><Check />保存用例</button>
+    </section>
 
-.gen-tip {
-  color: #909399;
-  font-size: 12px;
-}
+    <section v-else class="panel">
+      <Empty title="暂无独立执行批次" desc="勾选用例后点击「创建执行」，执行结果会在这里按批次归档。" />
+    </section>
 
-.draft-item {
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 10px;
-}
+    <TModal v-if="genVisible" title="智能生成用例草稿" :width="720" @close="genVisible = false">
+      <label class="field">
+        <span>需求上下文<em>*</em></span>
+        <textarea v-model="genContext" class="large" placeholder="粘贴需求描述 / 问题上下文，引擎将拆解测试点并覆盖正常、异常、边界场景生成结构化用例草稿" />
+      </label>
+      <div class="smart-actions">
+        <button class="button primary" :disabled="generating" @click="generate"><Sparkles />生成草稿</button>
+        <span class="tip" style="margin: 0">草稿不直接入库，逐条确认后保存</span>
+      </div>
+      <template v-if="drafts.length">
+        <h4 style="font-size: 12px; color: var(--muted); margin: 18px 0 4px">草稿（{{ drafts.length }} 条）</h4>
+        <div v-for="(d, i) in drafts" :key="i" class="detail-section">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px">
+            <Badge :value="d.priority" />
+            <strong style="flex: 1">{{ d.title }}</strong>
+            <button class="button" style="min-height: 34px" @click="saveDraft(d)">入库</button>
+          </div>
+          <div v-if="d.preconditions" style="font-size: 12px; color: #565b52; margin-bottom: 4px"><b>前置：</b>{{ d.preconditions }}</div>
+          <div style="font-size: 12px; color: #565b52; margin-bottom: 4px"><b>步骤：</b><span style="white-space: pre-line">{{ d.steps }}</span></div>
+          <div style="font-size: 12px; color: #565b52"><b>预期：</b>{{ d.expected }}</div>
+        </div>
+      </template>
+    </TModal>
 
-.draft-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
+    <TModal v-if="formVisible" :title="editId ? '编辑用例（保存后升版）' : '新增用例'" :width="640" @close="formVisible = false">
+      <div class="form-grid">
+        <label class="field full">
+          <span>用例标题<em>*</em></span>
+          <input v-model="form.title">
+        </label>
+        <label class="field full">
+          <span>模块<em>*</em></span>
+          <select v-model="modulePath">
+            <option value="">请选择项目 / 模块 / 子模块</option>
+            <option v-for="m in moduleOptions" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>优先级</span>
+          <select v-model="form.priority">
+            <option>P0</option>
+            <option>P1</option>
+            <option>P2</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>用例类型</span>
+          <select v-model="form.type">
+            <option>功能</option>
+            <option>接口</option>
+            <option>异常</option>
+            <option>边界</option>
+            <option>性能</option>
+            <option>安全</option>
+          </select>
+        </label>
+        <label class="field full">
+          <span>关联 Bug</span>
+          <input v-model="form.linkedBugNo">
+        </label>
+        <label class="field full">
+          <span>前置条件</span>
+          <textarea v-model="form.preconditions" style="min-height: 70px" />
+        </label>
+        <label class="field full">
+          <span>测试步骤（每行一步）<em>*</em></span>
+          <textarea v-model="form.steps" style="min-height: 110px" />
+        </label>
+        <label class="field full">
+          <span>预期结果<em>*</em></span>
+          <textarea v-model="form.expected" style="min-height: 70px" />
+        </label>
+        <label class="field full">
+          <span>测试数据</span>
+          <textarea v-model="form.testData" style="min-height: 70px" />
+        </label>
+      </div>
+      <template #footer>
+        <button class="button" @click="formVisible = false">取消</button>
+        <button class="button primary" @click="save"><Check />保存</button>
+      </template>
+    </TModal>
 
-.draft-title {
-  font-weight: 600;
-  flex: 1;
-}
-
-.draft-body {
-  font-size: 13px;
-  color: #606266;
-  line-height: 1.7;
-}
-
-.detail-text {
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.7;
-  background: #fafafa;
-  border-radius: 6px;
-  padding: 10px 12px;
-}
-
-.detail-text.pre {
-  white-space: pre-line;
-}
-
-.detail-actions {
-  margin-top: 16px;
-  display: flex;
-  gap: 8px;
-}
-</style>
+    <TDrawer
+      v-if="detailVisible && detail" eyebrow="DETAIL VIEW"
+      :title="detail.title" :subtitle="detail.caseNo" @close="detailVisible = false"
+    >
+      <div class="detail-badges">
+        <Badge :value="detail.priority" />
+        <Badge :value="detail.type" />
+        <Badge :value="detail.status" />
+        <span>v{{ detail.version }}</span>
+      </div>
+      <div class="detail-grid">
+        <div><span>用例编号</span><strong>{{ detail.caseNo }}</strong></div>
+        <div><span>所属模块</span><strong>{{ detail.projectName }} / {{ detail.moduleName }} / {{ detail.submoduleName }}</strong></div>
+        <div><span>生成日期</span><strong>{{ fmtDate(detail.createdAt) }}</strong></div>
+        <div><span>关联 Bug</span><strong>{{ detail.linkedBugNo || '0' }}</strong></div>
+      </div>
+      <section class="detail-section">
+        <h3>前置条件</h3>
+        <p>{{ detail.preconditions || '无' }}</p>
+      </section>
+      <section class="detail-section">
+        <h3>测试步骤</h3>
+        <ol>
+          <li v-for="(s, i) in (detail.steps || '').split('\n').map((x) => x.trim()).filter(Boolean)" :key="i">{{ s }}</li>
+        </ol>
+      </section>
+      <section class="detail-section result-box">
+        <h3>预期结果</h3>
+        <p>{{ detail.expected || '无' }}</p>
+      </section>
+      <section v-if="detail.testData" class="detail-section">
+        <h3>测试数据</h3>
+        <p>{{ detail.testData }}</p>
+      </section>
+      <div class="drawer-actions">
+        <button class="button" @click="copyCase(detail)">复制用例</button>
+        <button class="button primary" @click="openEdit(detail)">编辑并升版</button>
+      </div>
+      <section v-if="audits.length" class="detail-section" style="margin-top: 14px">
+        <h3>操作记录</h3>
+        <div class="timeline">
+          <div v-for="a in audits" :key="a.id">
+            <i />
+            <span>
+              <strong>{{ a.action }}</strong>
+              <small>{{ fmtTime(a.createdAt) }} {{ a.detail }}</small>
+            </span>
+          </div>
+        </div>
+      </section>
+    </TDrawer>
+  </div>
+</template>

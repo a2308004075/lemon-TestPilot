@@ -1,5 +1,6 @@
 package com.testpilot.engine;
 
+import com.testpilot.common.CryptoService;
 import com.testpilot.common.JsonUtil;
 import com.testpilot.entity.KbItem;
 import com.testpilot.entity.SysLlmConfig;
@@ -33,6 +34,8 @@ public class LlmClient {
 
     @Autowired
     private SysLlmConfigRepository llmRepo;
+    @Autowired
+    private CryptoService cryptoService;
 
     /** 是否有可用的已启用厂商 */
     public boolean isEnabled() {
@@ -124,7 +127,8 @@ public class LlmClient {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(cfg.getApiKey());
+        // 存储值为 AES-GCM 密文（enc: 前缀），调用前解密；存量明文原样透传
+        headers.setBearerAuth(cryptoService.decrypt(cfg.getApiKey()));
 
         String url = cfg.getBaseUrl().replaceAll("/+$", "") + "/chat/completions";
         ResponseEntity<String> resp = rest.exchange(url, HttpMethod.POST,

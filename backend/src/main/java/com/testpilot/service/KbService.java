@@ -28,6 +28,8 @@ public class KbService {
     private TaskRecordRepository taskRepo;
     @Autowired
     private RunTaskSnapshotRepository snapshotRepo;
+    @Autowired
+    private AuditService auditService;
 
     public Map<String, Object> list(String keyword, String category, String status, String moduleName) {
         List<KbItem> all = kbRepo.findAllByOrderByIdAsc();
@@ -144,7 +146,60 @@ public class KbService {
         kb.setSourceTask("人工维护");
         kb.setReviewNote("");
         kb.setRefCount(0);
+        KbItem saved = kbRepo.save(kb);
+        auditService.record("kb", saved.getKbNo(), "新增知识",
+                saved.getTitle() + " · " + saved.getCategory());
+        return saved;
+    }
+
+    /** 分析任务结论 → 知识条目（人工复核通过后沉淀经验，状态=待审核） */
+    public KbItem createFromTask(TaskRecord task) {
+        KbItem kb = new KbItem();
+        kb.setKbNo(nextKbNo());
+        kb.setTitle(task.getTitle());
+        kb.setCategory(categoryOf(task.getTaskType()));
+        kb.setProjectName(orDefault(task.getProjectName()));
+        kb.setModuleName(orDefault(task.getModuleName()));
+        kb.setSubmoduleName(orDefault(task.getSubmoduleName()));
+        kb.setRisk(task.getRisk() == null ? "P1" : task.getRisk());
+        kb.setVersion(1);
+        kb.setStatus("待审核");
+        kb.setBody(buildTaskBody(task));
+        kb.setSourceTask(task.getTaskNo());
+        kb.setReviewNote("");
+        kb.setRefCount(0);
         return kbRepo.save(kb);
+    }
+
+    /** 任务类型 → 知识分类（仅三类专项分析任务可入库，与详情抽屉入口一致） */
+    public static String categoryOf(String taskType) {
+        if (TaskTypes.BUG_ANALYSIS.equals(taskType)) {
+            return "历史 Bug 库";
+        }
+        if (TaskTypes.LOG_TRIAGE.equals(taskType)) {
+            return "日志规律库";
+        }
+        if (TaskTypes.SQL_ANALYSIS.equals(taskType)) {
+            return "SQL 经验库";
+        }
+        throw new BizException("该任务类型不支持知识入库：" + TaskTypes.nameOf(taskType));
+    }
+
+    private static String buildTaskBody(TaskRecord task) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("【来源】").append(task.getTaskNo()).append(" · ")
+                .append(TaskTypes.nameOf(task.getTaskType())).append("（人工复核通过）\n");
+        sb.append("【问题上下文】\n").append(task.getContext() == null ? "" : task.getContext().trim())
+                .append("\n");
+        sb.append("【分析结论】\n");
+        String output = task.getOutputJson() == null ? "" : task.getOutputJson().trim();
+        sb.append(output.isEmpty() ? "（无结构化输出）" :
+                output.length() > 1500 ? output.substring(0, 1500) + "…" : output);
+        return sb.toString();
+    }
+
+    private static String orDefault(String value) {
+        return value == null ? "" : value;
     }
 
     /** 编辑内容（升版） */
@@ -167,22 +222,28 @@ public class KbService {
         return kbRepo.save(kb);
     }
 
-    /** 审核：通过 / 驳回 */
+    /** 审核：通过 / 驳回（同步来源任务的知识入库状态） */
     public KbItem review(Long id, String action, String note) {
         KbItem kb = kbRepo.findById(id)
                 .orElseThrow(() -> new BizException("知识不存在：" + id));
         if ("approve".equals(action)) {
             kb.setStatus("已发布");
+            syncTaskKnowledgeStatus(kb.getSourceTask(), "已入库");
         } else if ("reject".equals(action)) {
             kb.setStatus("已驳回");
+            syncTaskKnowledgeStatus(kb.getSourceTask(), "未入库");
         } else {
             throw new BizException("无效的审核动作：" + action);
         }
         kb.setReviewNote(note == null ? "" : note);
-        return kbRepo.save(kb);
+        KbItem saved = kbRepo.save(kb);
+        auditService.record("kb", saved.getKbNo(),
+                "approve".equals(action) ? "审核通过" : "审核驳回",
+                saved.getTitle() + (note == null || note.isEmpty() ? "" : " · " + note));
+        return saved;
     }
 
-    /** 撤销入库：被引用时阻止 */
+    /** 撤销入库：被引用时阻止（同步来源任务回未入库） */
     public KbItem revoke(Long id) {
         KbItem kb = kbRepo.findById(id)
                 .orElseThrow(() -> new BizException("知识不存在：" + id));
@@ -190,7 +251,22 @@ public class KbService {
             throw new BizException("该知识已被引用 " + kb.getRefCount() + " 次，撤销将被阻止");
         }
         kb.setStatus("已撤销");
-        return kbRepo.save(kb);
+        syncTaskKnowledgeStatus(kb.getSourceTask(), "未入库");
+        KbItem saved = kbRepo.save(kb);
+        auditService.record("kb", saved.getKbNo(), "撤销入库", saved.getTitle());
+        return saved;
+    }
+
+    /** 知识审核结果反向同步来源任务（人工维护的知识不处理） */
+    private void syncTaskKnowledgeStatus(String sourceTask, String status) {
+        if (sourceTask == null || sourceTask.isEmpty() || "人工维护".equals(sourceTask)) {
+            return;
+        }
+        TaskRecord task = taskRepo.findByTaskNo(sourceTask).orElse(null);
+        if (task != null) {
+            task.setKnowledgeStatus(status);
+            taskRepo.save(task);
+        }
     }
 
     private String nextKbNo() {

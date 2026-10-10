@@ -4,7 +4,6 @@ import com.testpilot.engine.TaskTypes;
 import com.testpilot.entity.RunRecord;
 import com.testpilot.entity.TaskRecord;
 import com.testpilot.repository.KbItemRepository;
-import com.testpilot.repository.RegressionListRepository;
 import com.testpilot.repository.RunRecordRepository;
 import com.testpilot.repository.TaskRecordRepository;
 import com.testpilot.repository.TestCaseRepository;
@@ -32,8 +31,6 @@ public class DashboardService {
     @Autowired
     private KbItemRepository kbRepo;
     @Autowired
-    private RegressionListRepository regListRepo;
-    @Autowired
     private TestReportRepository reportRepo;
 
     public Map<String, Object> stats() {
@@ -53,9 +50,9 @@ public class DashboardService {
 
         // 数据资产 4 卡
         List<Map<String, Object>> assets = new ArrayList<Map<String, Object>>();
-        assets.add(card("cases", "用例库", caseRepo.count(), "条"));
-        assets.add(card("kb", "知识库", kbRepo.count(), "条"));
-        assets.add(card("regression", "回归清单", regListRepo.count(), "份"));
+        assets.add(card("cases", "测试用例", caseRepo.count(), "条"));
+        assets.add(card("tasks", "任务记录", taskRepo.count(), "条"));
+        assets.add(card("kb", "知识条目", kbRepo.count(), "条"));
         assets.add(card("reports", "测试报告", reportRepo.count(), "份"));
         result.put("assets", assets);
 
