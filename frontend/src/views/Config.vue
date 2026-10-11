@@ -181,6 +181,7 @@
             <div class="cat-pills">
               <button v-for="c in KB_CATEGORIES" :key="c" class="cat-pill"
                       :class="{ on: g.categories.includes(c) }"
+                      :disabled="kbRuleSaving"
                       @click="toggleKbCategory(g, c)">{{ c }}</button>
             </div>
           </div>
@@ -254,6 +255,8 @@ const KB_CATEGORIES = ['业务规则库', '回归规则库', '历史 Bug 库', '
 
 // 关联规则
 const kbRules = ref([])
+// 保存进行中禁止再次切换，避免并发 PUT 触发唯一键冲突
+const kbRuleSaving = ref(false)
 
 // ---------------- 模块 ----------------
 const loadModules = async () => {
@@ -372,11 +375,20 @@ const loadKbRules = async () => {
 }
 
 const toggleKbCategory = async (g, c) => {
+  if (kbRuleSaving.value) {
+    ElMessage.warning('关联保存中，请稍候再操作')
+    return
+  }
   const has = g.categories.includes(c)
   const categories = has ? g.categories.filter((x) => x !== c) : [...g.categories, c]
-  await apiConfigKbRuleSave(g.mainTaskType, categories)
-  g.categories = categories
-  ElMessage.success(`「${typeName(g.mainTaskType)}」已${has ? '取消关联' : '关联'}${c}`)
+  kbRuleSaving.value = true
+  try {
+    await apiConfigKbRuleSave(g.mainTaskType, categories)
+    g.categories = categories
+    ElMessage.success(`「${typeName(g.mainTaskType)}」已${has ? '取消关联' : '关联'}${c}`)
+  } finally {
+    kbRuleSaving.value = false
+  }
 }
 
 onMounted(async () => {

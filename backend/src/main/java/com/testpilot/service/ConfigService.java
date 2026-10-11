@@ -335,23 +335,45 @@ public class ConfigService {
         return result;
     }
 
-    /** 保存任务的知识分类关联（全量覆盖该任务的配置） */
+    /**
+     * 保存任务的知识分类关联（全量覆盖该任务的配置）。
+     * 按分类 upsert：保留仍存在的旧记录（主键不变），仅插入新增、删除移除的，
+     * 避免"先删后插"在并发保存时交错触发 uk_task_category 唯一键冲突。
+     * 并发串行由 ConfigController 的锁保证（锁需包在事务外层）。
+     */
     @Transactional
     public List<SysTaskKbRule> saveKbRule(String mainTaskType, List<String> categories) {
         if (!TaskTypes.isValid(mainTaskType)) {
             throw new BizException("未知任务类型：" + mainTaskType);
         }
-        kbRuleRepo.deleteByMainTaskType(mainTaskType);
+        // 入参去重（保持顺序），重复分类不应触发唯一键
+        List<String> wanted = new ArrayList<String>();
+        for (String c : categories) {
+            String cat = str(c);
+            if (!cat.isEmpty() && !wanted.contains(cat)) {
+                wanted.add(cat);
+            }
+        }
+        List<SysTaskKbRule> existing = kbRuleRepo.findByMainTaskTypeOrderBySortOrderAsc(mainTaskType);
+        Map<String, SysTaskKbRule> byCategory = new LinkedHashMap<String, SysTaskKbRule>();
+        for (SysTaskKbRule row : existing) {
+            byCategory.put(row.getCategory(), row);
+        }
         List<SysTaskKbRule> saved = new ArrayList<SysTaskKbRule>();
         int sort = 1;
-        for (String category : categories) {
-            SysTaskKbRule row = new SysTaskKbRule();
-            row.setMainTaskType(mainTaskType);
-            row.setCategory(category);
+        for (String category : wanted) {
+            SysTaskKbRule row = byCategory.remove(category);
+            if (row == null) {
+                row = new SysTaskKbRule();
+                row.setMainTaskType(mainTaskType);
+                row.setCategory(category);
+            }
             row.setSortOrder(sort++);
             row.setEnabled(true);
             saved.add(kbRuleRepo.save(row));
         }
+        // 新列表中已移除的分类，删除其旧记录
+        kbRuleRepo.deleteAll(byCategory.values());
         return saved;
     }
 

@@ -106,6 +106,14 @@ public class ConfigController {
 
     // ---------------- 任务与知识关联 ----------------
 
+    /**
+     * kb-rules 保存的进程内串行锁。
+     * 锁必须包在事务外层：@Transactional 的方法返回后才提交，方法内 synchronized
+     * 会在提交前放行，挡不住并发事务交错。快速连点分类 pill 会产生并发 PUT，
+     * 无锁时两个事务的插入会互相触发 uk_task_category 唯一键冲突。
+     */
+    private static final Object KB_RULE_SAVE_LOCK = new Object();
+
     @GetMapping("/kb-rules")
     public ApiResponse<List<Map<String, Object>>> kbRules() {
         return ApiResponse.ok(configService.kbRules());
@@ -121,6 +129,8 @@ public class ConfigController {
         }
         @SuppressWarnings("unchecked")
         List<String> list = (List<String>) categories;
-        return ApiResponse.ok(configService.saveKbRule(mainTaskType, list));
+        synchronized (KB_RULE_SAVE_LOCK) {
+            return ApiResponse.ok(configService.saveKbRule(mainTaskType, list));
+        }
     }
 }

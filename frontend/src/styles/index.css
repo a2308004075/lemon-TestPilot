@@ -295,6 +295,7 @@ td small { display: block; color: var(--muted); margin-top: 4px; }
 .cat-pills { display: flex; gap: 6px; flex-wrap: wrap; }
 .cat-pill { border: 1px solid var(--line); background: white; color: #9a9e94; border-radius: 8px; padding: 5px 10px; font-size: 10px; cursor: pointer; }
 .cat-pill.on { background: #f1f1ec; border-color: #d6d7cf; color: #4d5148; }
+.cat-pill:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ============ 抽屉 / 弹窗 / 详情 ============ */
 .overlay { position: fixed; inset: 0; background: #14150f55; backdrop-filter: blur(3px); z-index: 50; display: flex; justify-content: flex-end; }

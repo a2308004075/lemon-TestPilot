@@ -9,7 +9,7 @@
 | 数据库 | 16 张表，Flyway V1 建表 + V2 种子数据 + V3 补列迁移，首次启动自动建库建表灌数据 |
 | 后端 | engine 核心引擎（5 类）、service 业务层（11 个）、web REST 控制器（11 个）、entity/repository（16 表） |
 | 前端 | 布局（深色侧边栏 13 菜单 + 顶栏 DB/LLM 状态）+ 13 个页面 + 共享分析页组件 |
-| 脚本 | 一键启动（start-all.bat）、前后端单独启动、后端停止 |
+| 脚本 | 中间件（MySQL）启停脚本 `start-mysql.bat` / `stop-mysql.bat`（2026-10-11 起前后端启动脚本移除，改手动） |
 
 ## 二、13 个模块（与手册截图一一对应）
 
@@ -80,8 +80,10 @@
 
 ## 八、如何启动
 
-- 双击 `scripts\start-all.bat`（推荐），或分别运行 `scripts\start-backend.ps1` / `scripts\start-frontend.ps1`
-- 首次运行：脚本自动从 example 生成 `application-local.yml`，需填入 MySQL root 密码后重启后端
+- 第 1 步（中间件，脚本）：运行 `scripts\start-mysql.bat`（双击或终端执行，幂等，3306 已监听则跳过）
+- 第 2 步（后端，手动）：`backend/` 目录下 `mvn spring-boot:run`，或在 IDEA 中直接运行 `com.testpilot.TestPilotApplication`（默认 local profile，无需参数）
+- 第 3 步（前端，手动）：`frontend/` 目录下 `npm install`（首次）、`npm run dev`
+- 首次运行：需先手动复制 `application-local.yml.example` 为 `application-local.yml` 并填入 MySQL root 密码（详见《TestPilot-my部署文档.md》第 3 节）
 - 访问：前端 `http://localhost:5173`（代理 /api → 3344）；后端 `http://localhost:3344`
 
 ## 九、已知限制与后续建议

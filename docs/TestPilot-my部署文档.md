@@ -1,6 +1,6 @@
 # TestPilot-my 部署文档
 
-> **版本**：v1.0（2026-10-06）
+> **版本**：v1.1（2026-10-11，启动方式调整：`scripts\` 仅保留中间件（MySQL）启停脚本，后端/前端改为手动启动，见第 4 / 7.1 节）
 > **对象**：`D:\develop\TestPilot-my`（已按批准计划完成全量开发，13 模块可运行）
 > **基准**：以**实际实现代码**为准。实施阶段经确认的技术选型与《概要设计/详细设计》（编码前设计稿）存在差异，见 1.2。
 > **关联**：《TestPilot项目说明文档.md》《TestPilot-my概要设计.md》《TestPilot-my详细设计.md》《DEVELOPMENT_REPORT.md》（根目录）
@@ -54,30 +54,44 @@
 2. 该文件已列入 `.gitignore`，不会入库；`application.yml` 中 `spring.profiles.active: local` 自动加载它。
 3. 数据库名、端口、账号在 `backend/src/main/resources/application.yml` 的 `spring.datasource.url/username` 中，默认 `jdbc:mysql://127.0.0.1:3306/lemon_testpilot?createDatabaseIfNotExist=true...`，一般无需修改。
 
-> 使用 `scripts\start-backend.ps1` 启动时，若检测到 `application-local.yml` 不存在会自动从 example 复制并提示，改完密码重启即可。
+> 手动启动时若 `application-local.yml` 尚不存在，须先完成上面第 1 步的复制与密码填写，再启动后端（后端启动即连库，配置缺失/错误会启动失败）。
 
 ## 4. 首次部署与启动
 
-### 方式 A：一键脚本（推荐）
+启动顺序固定为：**中间件 MySQL（脚本）→ 后端（3344）→ 前端（5173）**。`scripts\` 目录只负责中间件启停（见 7.1），后端与前端按下述方式手动启动。
 
-双击项目根目录：
+### 第 1 步：启动中间件 MySQL（唯一脚本步骤）
 
 ```bat
-scripts\start-all.bat
+scripts\start-mysql.bat
 ```
 
-会打开两个窗口分别启动后端（3344）与前端（5173），前端窗口首次运行自动执行 `npm install`。
+双击运行或在终端执行均可；幂等：3306 已监听则直接跳过；否则弹出可见窗口 `TestPilot MySQL (3306)` 前台运行 mysqld，脚本等待端口就绪（最长 30s）后退出。
 
-### 方式 B：分步手动启动
+### 第 2 步：启动后端（命令行 / IDEA 任选其一）
+
+**方式 A：命令行（在 backend/ 目录下）**
 
 ```bash
-# 1) 后端（在 backend/ 目录下）
 mvn spring-boot:run
+```
 
-# 2) 前端（在 frontend/ 目录下，另开终端）
-npm install
+首次运行 Maven 需下载依赖，较慢属正常；启动完成即监听 3344。
+
+**方式 B：IDEA 图形界面**
+
+1. 用 IDEA 打开项目根目录，`backend` 为 Maven 模块，依赖自动导入；
+2. 直接运行 `backend/src/main/java/com/testpilot/TestPilotApplication.java` 的 main 方法即可——`application.yml` 已默认 `spring.profiles.active: local`，无需任何运行参数；
+3. 控制台出现 Spring Boot 启动完成日志即就绪；点击运行窗口红色停止按钮即可停止后端。
+
+### 第 3 步：启动前端（在 frontend/ 目录下，另开终端）
+
+```bash
+npm install    # 仅首次
 npm run dev
 ```
+
+访问 `http://localhost:5173`（`/api` 请求自动代理到后端 3344）。
 
 ### 首次启动自动完成的行为（无需手工干预）
 
@@ -159,14 +173,14 @@ server {
 
 ### 7.1 脚本清单（scripts/）
 
+`scripts\` 仅负责中间件（MySQL）的启动与停止，均为 bat 脚本（双击即可运行）；后端、前端按第 4 节手动启动。
+
 | 脚本 | 用途 |
 | --- | --- |
-| `start-all.bat` | 一键拉起前后端两个窗口 |
-| `start-backend.ps1` | 后端启动（首次自动生成 application-local.yml） |
-| `start-frontend.ps1` | 前端启动（node_modules 缺失时自动 npm install） |
-| `stop-backend.ps1` | 停止本机 TestPilot 后端 Java 进程 |
+| `start-mysql.bat` | 启动 MySQL（幂等：3306 已监听则跳过；弹出可见前台窗口运行 mysqld） |
+| `stop-mysql.bat` | 优雅停止 MySQL（mysqladmin shutdown，禁止强杀 mysqld） |
 
-前端手动停止：在前端终端窗口 `Ctrl+C`。
+停止方式：后端/前端在其运行终端 `Ctrl+C`（IDEA 中点停止按钮）；MySQL 双击或运行 `scripts\stop-mysql.bat`，或在 `TestPilot MySQL (3306)` 窗口内 `Ctrl+C`。
 
 ### 7.2 数据备份与恢复
 
@@ -187,7 +201,7 @@ mysql -uroot -p lemon_testpilot < backup_lemon_testpilot.sql
 | --- | --- |
 | 后端启动报 `Access denied for user 'root'` | `application-local.yml` 密码不正确；修改后重启 |
 | 后端启动报Communications link failure / Connection refused | MySQL 未启动或非 3306 端口；确认 MySQL 服务状态。**绿色版 MySQL 建议注册为 Windows 服务**（管理员 CMD 执行一次即可）：`D:\software\mysql-8.0\bin\mysqld.exe --install MySQL80 --defaults-file=D:\software\mysql-8.0\my.ini`，然后 `net start MySQL80`，并在服务管理器中将其设为"自动"启动 |
-| 端口被占用（3344 / 5173） | 运行 `scripts\stop-backend.ps1` 清理后端；或修改 `application.yml` 的 `server.port`、`vite.config.js` 的端口 |
+| 端口被占用（3344 / 5173） | 多为上次未正常退出的 java/node 进程残留：PowerShell 执行 `Get-NetTCPConnection -LocalPort 3344`（或 5173）查到 PID 后结束该进程；或修改 `application.yml` 的 `server.port`、`vite.config.js` 的端口 |
 | Flyway 报 checksum 校验失败 | 迁移文件不可变：已执行的 `V1/V2/V3` SQL 不能修改，只能新增 `V4__xxx.sql` |
 | `http://127.0.0.1:5173` 打不开 | Vite 默认监听 localhost（可能解析为 IPv6），改用 `http://localhost:5173` |
 | 首次启动后端很久无响应 | Maven 首次下载依赖；等待或配置国内镜像（如阿里云 Maven 镜像） |
@@ -210,7 +224,7 @@ TestPilot-my\
 ├── frontend\                         # Vue 3 + Vite（dev 5173，build 产物 dist/）
 │   ├── vite.config.js                # /api 代理到 3344
 │   └── src\                          # layout 布局 / router 13 路由 / api 封装 / views 13 页面 / styles 主题
-├── scripts\                          # 启动/停止脚本（见 7.1）
+├── scripts\                          # 中间件（MySQL）启停脚本（见 7.1）
 ├── docs\                             # 本文档与设计文档、手册截图
 └── DEVELOPMENT_REPORT.md             # 开发变更报告（模块/API/验证结果/修复记录）
 ```
