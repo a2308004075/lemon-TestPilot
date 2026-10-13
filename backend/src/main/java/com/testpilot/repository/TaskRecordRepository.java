@@ -18,5 +18,7 @@ public interface TaskRecordRepository extends JpaRepository<TaskRecord, Long> {
 
     long countByReviewStatus(String reviewStatus);
 
+    long countByRisk(String risk);
+
     List<TaskRecord> findTop5ByOrderByUpdatedAtDescIdDesc();
 }

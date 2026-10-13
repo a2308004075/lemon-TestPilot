@@ -139,6 +139,7 @@
           <div class="kb-badges">
             <Badge :value="k.category" />
             <Badge :value="k.risk" />
+            <Badge :value="k.status || '—'" />
           </div>
           <h3>{{ k.title }}</h3>
           <p>{{ (k.body || '').slice(0, 90) }}</p>
@@ -216,6 +217,7 @@ import {
   apiTaskCreate, apiTaskCompleteness, apiTasks, apiTaskDetail, apiTaskReview, apiTaskToKnowledge,
   apiKbTaskSourced, apiCaseModules, apiAudit
 } from '../../api'
+import { consumeAnalysisPrefill } from '../../utils/analysisPrefill'
 import { fmtTime, fmtDate } from '../../utils/format'
 import Badge from '../../components/ui/Badge.vue'
 import Empty from '../../components/ui/Empty.vue'
@@ -375,5 +377,11 @@ onMounted(async () => {
   }
   moduleOptions.value = options
   if (options.length) modulePath.value = options[0].value
+  // 联合分析预填（6.11 W4）：仅消费任务类型与本页一致的预填，取出即清空
+  const prefill = consumeAnalysisPrefill()
+  if (prefill && prefill.taskType === props.cfg.taskType) {
+    form.value.title = prefill.title || ''
+    form.value.context = prefill.context || ''
+  }
 })
 </script>

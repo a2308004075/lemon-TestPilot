@@ -8,4 +8,6 @@ import java.util.List;
 public interface RegressionListRepository extends JpaRepository<RegressionList, Long> {
 
     List<RegressionList> findAllByOrderByIdDesc();
+
+    long countByStatus(String status);
 }

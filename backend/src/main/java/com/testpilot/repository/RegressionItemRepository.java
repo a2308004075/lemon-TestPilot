@@ -8,4 +8,6 @@ import java.util.List;
 public interface RegressionItemRepository extends JpaRepository<RegressionItem, Long> {
 
     List<RegressionItem> findByListIdOrderBySeqAsc(Long listId);
+
+    long countByStatus(String status);
 }

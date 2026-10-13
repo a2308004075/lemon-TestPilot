@@ -23,22 +23,19 @@
       <div class="panel">
         <div class="panel-title">
           <h3>生成回归清单</h3>
-          <p>自动汇集高风险用例与已发布 Bug 条目，一键成单</p>
+          <p>系统将优先纳入 P0/P1、失败用例与历史缺陷</p>
         </div>
         <div class="field">
-          <span>目标版本</span>
-          <input v-model="genForm.version" placeholder="如 v2.8.4" />
+          <span>版本 / 清单标题<em>*</em></span>
+          <input v-model="genForm.title" placeholder="例如：v2.9.0 支付中心回归" />
         </div>
         <div class="field">
-          <span>清单标题<em>*</em></span>
-          <input v-model="genForm.title" placeholder="如：v2.8.4 支付链路回归" />
-        </div>
-        <div class="warning">
-          <AlertTriangle />
-          <p>生成来源：P0 用例 + 失败 / 阻塞用例 + 知识库 Bug 条目；不足 6 项时以通用回归规则补足。生成后逐项流转状态，进度自动计算。</p>
+          <span>变更内容与影响模块<em>*</em></span>
+          <textarea v-model="genForm.changeContent" class="large"
+                    placeholder="描述本次变更内容、涉及的功能模块与影响范围，AI 将据此分析生成回归项"></textarea>
         </div>
         <button class="button primary full" style="margin-top: 16px" :disabled="generating" @click="generate">
-          <ClipboardCheck /> {{ generating ? '生成中…' : '分析并生成' }}
+          <Sparkles /> {{ generating ? '分析中…' : '分析并生成' }}
         </button>
       </div>
     </div>
@@ -88,7 +85,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
-import { Download, Plus, ClipboardCheck, Copy, AlertTriangle, ChevronRight } from 'lucide-vue-next'
+import { Download, Plus, Sparkles, Copy, ChevronRight } from 'lucide-vue-next'
 import { apiRegressionLists, apiRegressionGenerate, apiRegressionItemStatus } from '../api'
 import Badge from '../components/ui/Badge.vue'
 import Empty from '../components/ui/Empty.vue'
@@ -97,12 +94,12 @@ const tab = ref('list')
 const lists = ref([])
 const loading = ref(false)
 const generating = ref(false)
-const genForm = ref({ title: '', version: '' })
+const genForm = ref({ title: '', changeContent: '' })
 
 const doneLists = computed(() => lists.value.filter((l) => l.status === '已完成'))
 const currentLists = computed(() => (tab.value === 'done' ? doneLists.value : lists.value))
 
-const sourceLabel = (t) => ({ case: '用例', bug: 'Bug', rule: '规则' }[t] || '来源')
+const sourceLabel = (t) => ({ case: '用例', bug: 'Bug', rule: '规则', ai: 'AI 分析' }[t] || '来源')
 
 const viewSource = (it) => {
   ElMessage.info(`来源：${sourceLabel(it.sourceType)}${it.sourceRef ? ' · ' + it.sourceRef : ''}`)
@@ -119,14 +116,19 @@ const load = async () => {
 
 const generate = async () => {
   if (!genForm.value.title.trim()) {
-    ElMessage.warning('请填写清单标题')
+    ElMessage.warning('请填写版本 / 清单标题')
+    return
+  }
+  if (!genForm.value.changeContent.trim()) {
+    ElMessage.warning('请填写变更内容与影响模块')
     return
   }
   generating.value = true
   try {
     const created = await apiRegressionGenerate(genForm.value)
-    ElMessage.success(`已生成「${created.title}」，共 ${created.total} 个回归项`)
-    genForm.value = { title: '', version: '' }
+    const tip = created.engineMode === 'llm' ? 'AI 分析完成' : '已按规则聚合生成（未启用大模型）'
+    ElMessage.success(`${tip}，共 ${created.total} 个回归项`)
+    genForm.value = { title: '', changeContent: '' }
     tab.value = 'list'
     await load()
   } finally {

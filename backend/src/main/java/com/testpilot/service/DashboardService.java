@@ -4,6 +4,8 @@ import com.testpilot.engine.TaskTypes;
 import com.testpilot.entity.RunRecord;
 import com.testpilot.entity.TaskRecord;
 import com.testpilot.repository.KbItemRepository;
+import com.testpilot.repository.RegressionItemRepository;
+import com.testpilot.repository.RegressionListRepository;
 import com.testpilot.repository.RunRecordRepository;
 import com.testpilot.repository.TaskRecordRepository;
 import com.testpilot.repository.TestCaseRepository;
@@ -32,20 +34,26 @@ public class DashboardService {
     private KbItemRepository kbRepo;
     @Autowired
     private TestReportRepository reportRepo;
+    @Autowired
+    private RegressionListRepository regressionListRepo;
+    @Autowired
+    private RegressionItemRepository regressionItemRepo;
 
     public Map<String, Object> stats() {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
 
-        // 6 状态卡
+        // 6 状态卡：待办 → 进行中 → 风险 → 结论
         List<Map<String, Object>> statusCards = new ArrayList<Map<String, Object>>();
-        statusCards.add(card("runCount", "执行记录", runRepo.count(), "次"));
-        statusCards.add(card("pendingReview",
-                "待复核", runRepo.countByReviewStatus("待复核") + taskRepo.countByReviewStatus("待复核"), "条"));
-        statusCards.add(card("pendingSupplement",
-                "待补充", runRepo.countByStatus("待补充") + taskRepo.countByStatus("待补充"), "条"));
-        statusCards.add(card("taskCount", "分析任务", taskRepo.count(), "个"));
-        statusCards.add(card("kbEffective", "有效知识", kbRepo.countByStatus("已发布"), "条"));
-        statusCards.add(card("p0Cases", "P0 用例", caseRepo.countByPriority("P0"), "条"));
+        statusCards.add(card("pendingSupplement", "待补充",
+                runRepo.countByStatus("待补充") + taskRepo.countByStatus("待补充"), "缺少必要信息"));
+        statusCards.add(card("pendingAudit", "待审核",
+                runRepo.countByReviewStatus("待复核") + taskRepo.countByReviewStatus("待复核"), "需要人工确认"));
+        statusCards.add(card("running", "执行中", regressionListRepo.countByStatus("执行中"), "回归与全链路"));
+        statusCards.add(card("blocked", "阻塞",
+                caseRepo.countByStatus("阻塞") + regressionItemRepo.countByStatus("阻塞"), "需要优先处理"));
+        statusCards.add(card("highRisk", "高风险",
+                runRepo.countByRisk("P0") + taskRepo.countByRisk("P0") + caseRepo.countByPriority("P0"), "P0 任务与用例"));
+        statusCards.add(card("notLaunchable", "不可上线", reportRepo.countByConclusion("不可上线"), "当前质量结论"));
         result.put("statusCards", statusCards);
 
         // 数据资产 4 卡
@@ -94,12 +102,12 @@ public class DashboardService {
         return result;
     }
 
-    private static Map<String, Object> card(String key, String name, long value, String unit) {
+    private static Map<String, Object> card(String key, String name, long value, String desc) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("key", key);
         m.put("name", name);
         m.put("value", value);
-        m.put("unit", unit);
+        m.put("desc", desc);
         return m;
     }
 }

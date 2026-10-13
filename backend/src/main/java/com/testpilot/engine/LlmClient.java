@@ -80,6 +80,55 @@ public class LlmClient {
         }
     }
 
+    /**
+     * 回归清单生成（回归页「分析并生成」直连）：基于变更内容与影响模块输出回归项。
+     * 成功返回非空 item 列表（title/priority/reason），失败返回 null（调用方降级规则聚合）。
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> generateRegressionItems(SysLlmConfig cfg, String title,
+                                                             String changeContent, AnalysisContext ctx) {
+        try {
+            String content = chat(cfg, regressionSystemPrompt(),
+                    regressionUserPrompt(title, changeContent, ctx));
+            Map<String, Object> out = extractJson(content);
+            if (out == null) {
+                return null;
+            }
+            Object raw = out.get("regression_items");
+            if (!(raw instanceof List)) {
+                return null;
+            }
+            List<Map<String, Object>> items = new ArrayList<Map<String, Object>>();
+            for (Object o : (List<Object>) raw) {
+                if (!(o instanceof Map)) {
+                    continue;
+                }
+                Map<String, Object> m = (Map<String, Object>) o;
+                String itemTitle = m.get("title") == null ? "" : m.get("title").toString().trim();
+                if (itemTitle.isEmpty() || itemTitle.length() > 200) {
+                    continue;
+                }
+                String priority = m.get("priority") == null
+                        ? "P1" : m.get("priority").toString().trim().toUpperCase();
+                if (!Arrays.asList("P0", "P1", "P2").contains(priority)) {
+                    priority = "P1";
+                }
+                Map<String, Object> item = new LinkedHashMap<String, Object>();
+                item.put("title", itemTitle);
+                item.put("priority", priority);
+                item.put("reason", m.get("reason") == null ? "" : m.get("reason").toString().trim());
+                items.add(item);
+                if (items.size() >= 30) {
+                    break;
+                }
+            }
+            return items.isEmpty() ? null : items;
+        } catch (Exception e) {
+            log.warn("回归清单 LLM 生成失败，降级规则聚合：{}", e.getMessage());
+            return null;
+        }
+    }
+
     /** 配置中心「测试连接」 */
     public Map<String, Object> testConnection(SysLlmConfig cfg) {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
@@ -148,6 +197,48 @@ public class LlmClient {
         m.put("role", role);
         m.put("content", content);
         return m;
+    }
+
+    private String regressionSystemPrompt() {
+        return "你是资深测试工程师，正在 TestPilot 个人 QA 工作台为一次版本变更生成可执行的回归测试清单。"
+                + "只输出一个 JSON 对象，不要输出任何其他文字。"
+                + "必须遵守：1) 优先纳入与变更内容直接相关的 P0/P1 高风险用例、失败/阻塞用例与历史缺陷；"
+                + "2) 结合变更影响模块补充必要的通用回归场景（主流程、异常重放、幂等重复请求、上下游一致性、边界值）；"
+                + "3) 禁止编造用例编号或 Bug 编号，参考材料中给出的编号必须原样引用；"
+                + "4) 证据不足时在 need_more_info 数组中明确标注缺项，不要猜测；"
+                + "5) AI 不批准上线，清单需人工复核后执行。"
+                + "输出 JSON 必须包含 risk_level（P0/P1/P2）、human_review_points（数组）、need_more_info（数组）、"
+                + "regression_items（数组，每项含 title（不超过 60 字）、priority（P0/P1/P2）、reason（纳入理由））。";
+    }
+
+    private String regressionUserPrompt(String title, String changeContent, AnalysisContext ctx) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("清单标题：").append(title).append("\n");
+        sb.append("变更内容与影响模块：\n").append(changeContent).append("\n");
+        if (!ctx.getHighRiskCases().isEmpty()) {
+            sb.append("\n高风险用例参考（优先纳入与变更相关的项）：\n");
+            for (com.testpilot.entity.TestCase c : ctx.getHighRiskCases()) {
+                sb.append("- ").append(c.getTitle()).append("（").append(c.getCaseNo())
+                        .append("，").append(c.getPriority()).append("）\n");
+            }
+        }
+        boolean hasBug = false;
+        boolean hasRule = false;
+        for (KbItem kb : ctx.getKbRefs()) {
+            if ("历史 Bug 库".equals(kb.getCategory()) && !hasBug) {
+                hasBug = true;
+                sb.append("\n历史 Bug 参考：\n");
+            }
+            if ("回归规则库".equals(kb.getCategory()) && !hasRule) {
+                hasRule = true;
+                sb.append("\n回归规则参考：\n");
+            }
+            if ("历史 Bug 库".equals(kb.getCategory()) || "回归规则库".equals(kb.getCategory())) {
+                sb.append("- ").append(kb.getTitle()).append("（").append(kb.getKbNo()).append("）\n");
+            }
+        }
+        sb.append("\n请输出结构化 JSON 回归清单。");
+        return sb.toString();
     }
 
     private String buildSystemPrompt(String taskType) {

@@ -54,6 +54,13 @@ export const apiCaseDetail = (id) => http.get(`/api/cases/${id}`)
 export const apiCaseUpdate = (id, payload) => http.put(`/api/cases/${id}`, payload)
 export const apiCaseCopy = (id) => http.post(`/api/cases/${id}/copy`)
 
+// 用例执行批次（6.11 W3）
+export const apiCaseBatches = (params) => http.get('/api/cases/batches', { params })
+export const apiCaseBatchCreate = (payload) => http.post('/api/cases/batches', payload)
+export const apiCaseBatchDetail = (id) => http.get(`/api/cases/batches/${id}`)
+export const apiCaseBatchUpdate = (id, payload) => http.patch(`/api/cases/batches/${id}`, payload)
+export const apiCaseBatchDelete = (id) => http.delete(`/api/cases/batches/${id}`)
+
 // 分析任务（Bug/日志/SQL 共用）
 export const apiTasks = (params) => http.get('/api/tasks', { params })
 export const apiTaskCreate = (payload) => http.post('/api/tasks', payload)

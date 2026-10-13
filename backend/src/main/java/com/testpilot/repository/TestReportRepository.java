@@ -8,4 +8,6 @@ import java.util.List;
 public interface TestReportRepository extends JpaRepository<TestReport, Long> {
 
     List<TestReport> findAllByOrderByIdDesc();
+
+    long countByConclusion(String conclusion);
 }

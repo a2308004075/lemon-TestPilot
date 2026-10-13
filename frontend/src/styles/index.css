@@ -94,6 +94,7 @@ svg { width: 18px; height: 18px; }
 .button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .button svg { width: 16px; }
 .icon-button { width: 36px; height: 36px; border: 1px solid var(--line); background: white; border-radius: 9px; display: grid; place-items: center; flex: none; }
+.icon-button.danger { color: var(--red); border-color: #e9bfc5; }
 .icon-button svg { width: 15px; }
 .text-button { border: 0; background: transparent; color: #8b6100; font-weight: 700; display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; flex: none; }
 .text-button svg { width: 15px; }
@@ -444,6 +445,16 @@ td small { display: block; color: var(--muted); margin-top: 4px; }
   .wb-orchestration, .wb-input-grid { grid-template-columns: 1fr; }
   .wb-asset-nav { position: static; }
 }
+
+/* ============ 用例执行批次（6.11 W3） ============ */
+.batch-item { border: 1px solid var(--line); border-radius: 12px; padding: 13px; margin-bottom: 10px; }
+.batch-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.batch-item-head strong { font-size: 13px; flex: 1; }
+.batch-item-form { display: grid; grid-template-columns: 120px 1fr auto; gap: 8px; align-items: center; }
+.batch-item-form select { width: 120px; min-height: 36px; padding: 7px 10px; }
+.batch-item-form input { min-height: 36px; padding: 7px 12px; }
+.batch-item-form select:disabled, .batch-item-form input:disabled { background: #f1f1ec; color: var(--muted); cursor: not-allowed; }
+.batch-item-time { display: block; margin-top: 8px; font-size: 10px; color: var(--muted); }
 
 /* ============ 滚动条 ============ */
 ::-webkit-scrollbar { width: 8px; height: 8px; }

@@ -12,12 +12,12 @@ const recent = ref([])
 
 // 后端 statusCards key → 左侧彩色竖条色类
 const cardColor = {
-  pendingSupplement: 'warn',
-  pendingReview: 'yellow',
-  runCount: 'blue',
-  kbEffective: 'blue',
-  p0Cases: 'red',
-  taskCount: 'dark'
+  pendingSupplement: 'yellow',
+  pendingAudit: 'yellow',
+  running: 'blue',
+  blocked: 'red',
+  highRisk: 'red',
+  notLaunchable: 'dark'
 }
 
 const quicks = [
@@ -67,8 +67,8 @@ onMounted(async () => {
     <div class="metric-grid six">
       <article v-for="c in stats.statusCards || []" :key="c.key" class="metric" :class="cardColor[c.key]">
         <span>{{ c.name }}</span>
-        <strong>{{ c.value }}<small style="font-size: 12px; margin-left: 3px">{{ c.unit }}</small></strong>
-        <small>实时统计</small>
+        <strong>{{ c.value }}</strong>
+        <small>{{ c.desc }}</small>
       </article>
     </div>
 

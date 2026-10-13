@@ -8,14 +8,16 @@ import {
   ListChecks, Sparkles
 } from 'lucide-vue-next'
 import Badge from '../components/ui/Badge.vue'
-import Empty from '../components/ui/Empty.vue'
 import TPagination from '../components/ui/TPagination.vue'
 import TDrawer from '../components/ui/TDrawer.vue'
 import TModal from '../components/ui/TModal.vue'
+import ExecutionBatches from './components/ExecutionBatches.vue'
+import { nextTick } from 'vue'
 import {
   apiCases, apiCaseTree, apiCaseModules, apiCaseCreate, apiCaseUpdate, apiCaseCopy,
-  apiCaseGenerateDrafts, apiAudit
+  apiCaseGenerateDrafts, apiCaseBatchCreate, apiAudit
 } from '../api'
+import { setAnalysisPrefill } from '../utils/analysisPrefill'
 import { fmtTime, fmtDate } from '../utils/format'
 
 const router = useRouter()
@@ -41,6 +43,10 @@ const drafts = ref([])
 const detailVisible = ref(false)
 const detail = ref(null)
 const audits = ref([])
+const creatingRun = ref(false)
+const batchTitleVisible = ref(false)
+const batchTitle = ref('')
+const batchTitleInput = ref(null)
 
 const p0Count = computed(() => rows.value.filter((r) => r.priority === 'P0').length)
 const allSelected = computed(() => rows.value.length > 0 && selection.value.length === rows.value.length)
@@ -112,7 +118,8 @@ const toggleAll = () => {
 }
 
 const emptyForm = () => ({
-  title: '', priority: 'P1', type: '功能', preconditions: '', steps: '', expected: '', testData: '', linkedBugNo: ''
+  title: '', priority: 'P1', type: '功能', status: '使用',
+  preconditions: '', steps: '', expected: '', testData: '', linkedBugNo: ''
 })
 
 const openCreate = () => {
@@ -125,7 +132,7 @@ const openCreate = () => {
 const openEdit = (row) => {
   editId.value = row.id
   form.value = {
-    title: row.title, priority: row.priority, type: row.type,
+    title: row.title, priority: row.priority, type: row.type, status: row.status || '使用',
     preconditions: row.preconditions, steps: row.steps, expected: row.expected,
     testData: row.testData, linkedBugNo: row.linkedBugNo
   }
@@ -246,8 +253,61 @@ const downloadBlob = (blob, filename) => {
   URL.revokeObjectURL(url)
 }
 
-const bulkCreateRun = () => ElMessage.success('已创建用例执行任务，执行结果会按批次归档到「执行记录」')
-const bulkJointAnalysis = () => ElMessage.success('已带入 Bug 联合分析')
+/** 创建执行：先弹窗输入批次名，再勾选用例生成执行批次（6.11 W3） */
+const bulkCreateRun = () => {
+  if (!selection.value.length) {
+    ElMessage.warning('请先勾选用例')
+    return
+  }
+  batchTitle.value = ''
+  batchTitleVisible.value = true
+  nextTick(() => batchTitleInput.value?.focus())
+}
+
+const confirmBatchCreate = async () => {
+  const title = batchTitle.value.trim()
+  if (!title) {
+    ElMessage.warning('请输入批次名')
+    return
+  }
+  batchTitleVisible.value = false
+  creatingRun.value = true
+  try {
+    const batch = await apiCaseBatchCreate({
+      caseIds: selection.value.map((r) => r.id),
+      title
+    })
+    ElMessage.success(`已创建批次（${batch.batch.total} 条）`)
+    selection.value = []
+    tab.value = 'execution'
+  } finally {
+    creatingRun.value = false
+  }
+}
+
+/** 联合分析：拼接 ≤5 条勾选用例为材料，跳转 Bug 分析页预填（6.11 W4） */
+const bulkJointAnalysis = () => {
+  if (!selection.value.length) {
+    ElMessage.warning('请先勾选用例')
+    return
+  }
+  let picked = selection.value
+  if (picked.length > 5) {
+    picked = picked.slice(0, 5)
+    ElMessage.warning('最多携带 5 条用例，已取前 5 条')
+  }
+  const material = picked.map((c) =>
+    `【${c.caseNo}】${c.title}\n步骤：${(c.steps || '').trim() || '无'}\n预期：${(c.expected || '').trim() || '无'}`
+  ).join('\n\n')
+  setAnalysisPrefill({
+    taskType: 'bug_analysis',
+    title: picked.length === 1
+      ? `联合分析：${picked[0].title}`
+      : `联合分析：${picked[0].title} 等 ${picked.length} 条用例`,
+    context: `以下为用例库勾选用例的验证要点，请联合分析潜在缺陷与回归风险：\n\n${material}`
+  })
+  router.push('/bug-analysis')
+}
 
 onMounted(async () => {
   await Promise.all([load(), loadTree()])
@@ -296,7 +356,7 @@ onMounted(async () => {
 
       <div v-if="selection.length" class="bulkbar">
         <strong>已选 {{ selection.length }} 条</strong>
-        <button @click="bulkCreateRun">创建执行</button>
+        <button :disabled="creatingRun" @click="bulkCreateRun">{{ creatingRun ? '创建中…' : '创建执行' }}</button>
         <button @click="bulkJointAnalysis">联合分析</button>
         <button @click="router.push('/regression')">生成回归</button>
         <button @click="router.push('/reports')">生成报告</button>
@@ -426,6 +486,13 @@ onMounted(async () => {
           </select>
         </label>
         <label class="field">
+          <span>状态</span>
+          <select v-model="form.status">
+            <option>使用</option>
+            <option>废弃</option>
+          </select>
+        </label>
+        <label class="field">
           <span>关联 Bug</span>
           <input v-model="form.linkedBugNo" placeholder="如 BUG-20260901-001，可留空">
         </label>
@@ -449,9 +516,7 @@ onMounted(async () => {
       <button class="button primary" @click="save"><Check />保存用例</button>
     </section>
 
-    <section v-else class="panel">
-      <Empty title="暂无独立执行批次" desc="勾选用例后点击「创建执行」，执行结果会在这里按批次归档。" />
-    </section>
+    <ExecutionBatches v-else />
 
     <TModal v-if="genVisible" title="智能生成用例草稿" :width="720" @close="genVisible = false">
       <label class="field">
@@ -509,6 +574,13 @@ onMounted(async () => {
             <option>安全</option>
           </select>
         </label>
+        <label class="field">
+          <span>状态</span>
+          <select v-model="form.status">
+            <option>使用</option>
+            <option>废弃</option>
+          </select>
+        </label>
         <label class="field full">
           <span>关联 Bug</span>
           <input v-model="form.linkedBugNo">
@@ -533,6 +605,19 @@ onMounted(async () => {
       <template #footer>
         <button class="button" @click="formVisible = false">取消</button>
         <button class="button primary" @click="save"><Check />保存</button>
+      </template>
+    </TModal>
+
+    <TModal v-if="batchTitleVisible" title="创建执行批次" :width="480" @close="batchTitleVisible = false">
+      <label class="field full">
+        <span>批次名</span>
+        <input ref="batchTitleInput" v-model="batchTitle" placeholder="请输入批次名" @keyup.enter="confirmBatchCreate">
+      </label>
+      <template #footer>
+        <button class="button" @click="batchTitleVisible = false">取消</button>
+        <button class="button primary" :disabled="creatingRun" @click="confirmBatchCreate">
+          {{ creatingRun ? '创建中…' : '创建' }}
+        </button>
       </template>
     </TModal>
 

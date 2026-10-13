@@ -4,7 +4,9 @@ import com.testpilot.common.ApiResponse;
 import com.testpilot.entity.TestCase;
 import com.testpilot.service.CaseService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -75,5 +77,35 @@ public class CaseController {
     @PostMapping("/{id}/copy")
     public ApiResponse<TestCase> copy(@PathVariable Long id) {
         return ApiResponse.ok(caseService.copy(id));
+    }
+
+    /** 用例执行批次（6.11 W3）：创建 / 列表 / 详情 / 逐条登记 */
+    @GetMapping("/batches")
+    public ApiResponse<Map<String, Object>> batchList(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(caseService.listBatches(page, size));
+    }
+
+    @PostMapping("/batches")
+    public ApiResponse<Map<String, Object>> batchCreate(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(caseService.createBatch(body));
+    }
+
+    @GetMapping("/batches/{id}")
+    public ApiResponse<Map<String, Object>> batchDetail(@PathVariable Long id) {
+        return ApiResponse.ok(caseService.batchDetail(id));
+    }
+
+    @PatchMapping("/batches/{id}")
+    public ApiResponse<Map<String, Object>> batchUpdate(@PathVariable Long id,
+                                                        @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(caseService.updateBatch(id, body));
+    }
+
+    @DeleteMapping("/batches/{id}")
+    public ApiResponse<Void> batchDelete(@PathVariable Long id) {
+        caseService.deleteBatch(id);
+        return ApiResponse.ok(null);
     }
 }

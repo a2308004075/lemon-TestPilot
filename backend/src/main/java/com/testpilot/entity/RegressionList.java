@@ -27,6 +27,10 @@ public class RegressionList extends TimestampedEntity {
     @Column(name = "version")
     private String version;
 
+    /** 变更内容与影响模块（生成输入材料） */
+    @Column(name = "change_content")
+    private String changeContent;
+
     /** 执行中 / 已完成 */
     @Column(name = "status")
     private String status;

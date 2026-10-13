@@ -15,5 +15,7 @@ public interface RunRecordRepository extends JpaRepository<RunRecord, Long> {
 
     long countByReviewStatus(String reviewStatus);
 
+    long countByRisk(String risk);
+
     List<RunRecord> findTop5ByOrderByUpdatedAtDescIdDesc();
 }

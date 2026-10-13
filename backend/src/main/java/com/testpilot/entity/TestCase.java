@@ -54,7 +54,7 @@ public class TestCase extends TimestampedEntity {
     @Column(name = "test_data", columnDefinition = "TEXT")
     private String testData;
 
-    /** 未执行 / 通过 / 失败 / 阻塞 */
+    /** 使用 / 废弃（用例生命周期状态，非执行结果） */
     @Column(name = "status")
     private String status;
 
