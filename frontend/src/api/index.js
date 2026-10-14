@@ -53,6 +53,8 @@ export const apiCaseCreate = (payload) => http.post('/api/cases', payload)
 export const apiCaseDetail = (id) => http.get(`/api/cases/${id}`)
 export const apiCaseUpdate = (id, payload) => http.put(`/api/cases/${id}`, payload)
 export const apiCaseCopy = (id) => http.post(`/api/cases/${id}/copy`)
+export const apiCaseDelete = (id) => http.delete(`/api/cases/${id}`)
+export const apiCaseImport = (payload) => http.post('/api/cases/import', payload)
 
 // 用例执行批次（6.11 W3）
 export const apiCaseBatches = (params) => http.get('/api/cases/batches', { params })

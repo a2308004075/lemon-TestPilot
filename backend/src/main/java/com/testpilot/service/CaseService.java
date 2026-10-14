@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -224,6 +225,86 @@ public class CaseService {
         auditService.record("case", saved.getCaseNo(), "复制用例",
                 "来自 " + src.getCaseNo() + " · " + saved.getTitle());
         return saved;
+    }
+
+    /** 删除用例：仅废弃状态可删，物理删除并写审计（执行条目为快照引用，不受影响） */
+    @Transactional
+    public void delete(Long id) {
+        TestCase c = detail(id);
+        if (!"废弃".equals(c.getStatus())) {
+            throw new BizException("仅废弃状态的用例可删除，请先编辑状态为废弃");
+        }
+        caseRepo.delete(c);
+        auditService.record("case", c.getCaseNo(), "删除用例",
+                c.getTitle() + " · " + c.getPriority());
+    }
+
+    /** XLSX 批量导入：标题+项目/模块/子模块四元组查重，重复或无效行跳过，汇总写一条审计 */
+    @Transactional
+    public Map<String, Object> importCases(Map<String, Object> body) {
+        Object raw = body.get("cases");
+        List<Object> rows = raw instanceof List ? (List<Object>) raw : new ArrayList<Object>();
+        if (rows.isEmpty()) {
+            throw new BizException("没有可导入的用例");
+        }
+        if (rows.size() > 500) {
+            throw new BizException("单次最多导入 500 条用例");
+        }
+        // 全量载入查重键与已有编号，内存判重（前端预览已过滤无效行，此处为防御性兜底）
+        Set<String> dupKeys = new HashSet<String>();
+        Set<String> caseNos = new HashSet<String>();
+        for (TestCase c : caseRepo.findAll()) {
+            dupKeys.add(dupKey(c.getTitle(), c.getProjectName(), c.getModuleName(), c.getSubmoduleName()));
+            caseNos.add(c.getCaseNo());
+        }
+        // 编号时间游标逐秒顺延：批量插入下避免 nextCaseNo 的同秒 sleep 等待
+        LocalDateTime slot = LocalDateTime.now();
+        int imported = 0;
+        int skipped = 0;
+        for (Object o : rows) {
+            if (!(o instanceof Map)) {
+                skipped++;
+                continue;
+            }
+            Map<String, Object> row = (Map<String, Object>) o;
+            String title = str(row.get("title"));
+            String moduleName = str(row.get("moduleName"));
+            if (title.isEmpty() || moduleName.isEmpty()) {
+                skipped++;
+                continue;
+            }
+            if (!dupKeys.add(dupKey(title, str(row.get("projectName")), moduleName,
+                    str(row.get("submoduleName"))))) {
+                skipped++;
+                continue;
+            }
+            String no;
+            do {
+                no = "TC-" + slot.format(CASE_NO_FMT);
+                slot = slot.plusSeconds(1);
+            } while (caseNos.contains(no));
+            caseNos.add(no);
+            TestCase c = new TestCase();
+            c.setCaseNo(no);
+            applyFields(c, row);
+            c.setStatus("使用");
+            c.setVersion(1);
+            c.setCreatedDate(LocalDate.now());
+            caseRepo.save(c);
+            imported++;
+        }
+        auditService.record("case", "XLSX-IMPORT", "批量导入用例",
+                "导入 " + imported + " 条，跳过 " + skipped + " 条");
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("total", rows.size());
+        result.put("imported", imported);
+        result.put("skipped", skipped);
+        return result;
+    }
+
+    /** 查重键：标题 + 项目/模块/子模块四元组 */
+    private static String dupKey(String title, String project, String module, String sub) {
+        return title + "|" + project + "|" + module + "|" + sub;
     }
 
     // ---------- 用例执行批次（6.11 W3） ----------

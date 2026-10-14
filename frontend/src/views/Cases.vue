@@ -4,8 +4,8 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
 import {
-  Download, Plus, Search, Archive, Layers3, Check, ChevronDown, ChevronRight,
-  ListChecks, Sparkles
+  Download, Search, Layers3, Check, ChevronDown, ChevronRight,
+  ListChecks, Sparkles, Upload
 } from 'lucide-vue-next'
 import Badge from '../components/ui/Badge.vue'
 import TPagination from '../components/ui/TPagination.vue'
@@ -14,15 +14,15 @@ import TModal from '../components/ui/TModal.vue'
 import ExecutionBatches from './components/ExecutionBatches.vue'
 import { nextTick } from 'vue'
 import {
-  apiCases, apiCaseTree, apiCaseModules, apiCaseCreate, apiCaseUpdate, apiCaseCopy,
-  apiCaseGenerateDrafts, apiCaseBatchCreate, apiAudit
+  apiCases, apiCaseTree, apiCaseModules, apiCaseCreate, apiCaseUpdate, apiCaseCopy, apiCaseDelete,
+  apiCaseGenerateDrafts, apiCaseBatchCreate, apiCaseImport, apiAudit
 } from '../api'
 import { setAnalysisPrefill } from '../utils/analysisPrefill'
 import { fmtTime, fmtDate } from '../utils/format'
 
 const router = useRouter()
 const tab = ref('library')
-const query = ref({ keyword: '', priority: '', status: '', moduleName: '', submoduleName: '', page: 1, size: 20 })
+const query = ref({ keyword: '', priority: '', status: '', moduleName: '', submoduleName: '', modulePath: '', page: 1, size: 20 })
 const rows = ref([])
 const total = ref(0)
 const tree = ref([])
@@ -177,6 +177,16 @@ const copyCase = async (row) => {
   await loadTree()
 }
 
+/** 删除废弃用例：二次确认后物理删除，关闭抽屉并刷新列表与模块树 */
+const removeCase = async () => {
+  if (!confirm(`确定删除用例「${detail.value.title}」？\n删除后不可恢复。`)) return
+  await apiCaseDelete(detail.value.id)
+  ElMessage.success('用例已删除')
+  detailVisible.value = false
+  await load()
+  await loadTree()
+}
+
 const openGenerate = () => {
   genVisible.value = true
   drafts.value = []
@@ -218,7 +228,8 @@ const openDetail = async (row) => {
   audits.value = await apiAudit({ entityType: 'case', entityNo: row.caseNo })
 }
 
-const exportCases = (format, items) => {
+/** 勾选导出 XLSX（批量栏入口，全列快照） */
+const exportCases = (items) => {
   const list = items && items.length ? items : rows.value
   if (!list.length) {
     ElMessage.info('没有可导出的用例')
@@ -230,27 +241,95 @@ const exportCases = (format, items) => {
     版本: 'v' + c.version, 关联Bug: c.linkedBugNo, 前置条件: c.preconditions || '',
     测试步骤: c.steps || '', 预期结果: c.expected || '', 测试数据: c.testData || ''
   }))
-  const sheet = XLSX.utils.json_to_sheet(data)
-  const filename = `用例库_${list.length}条`
-  if (format === 'xlsx') {
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, sheet, '用例库')
-    XLSX.writeFile(wb, `${filename}.xlsx`)
-  } else if (format === 'csv') {
-    downloadBlob(new Blob(['\ufeff' + XLSX.utils.sheet_to_csv(sheet)], { type: 'text/csv;charset=utf-8' }), `${filename}.csv`)
-  } else {
-    downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' }), `${filename}.json`)
-  }
-  ElMessage.success(`已导出 ${list.length} 条用例（${format.toUpperCase()}）`)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), '用例库')
+  XLSX.writeFile(wb, `用例库_${list.length}条.xlsx`)
+  ElMessage.success(`已导出 ${list.length} 条用例（XLSX）`)
 }
 
-const downloadBlob = (blob, filename) => {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+/** 导出导入模版：11 列有效表头 + 1 行示例（示例行标题自带删除提示） */
+const exportTemplate = () => {
+  const data = [{
+    标题: '【示例】购物车添加商品，导入前请删除本行',
+    项目: '电商平台', 模块: '购物车', 子模块: '添加商品',
+    优先级: 'P1', 类型: '功能', 关联Bug: '',
+    前置条件: '已登录且购物车为空',
+    测试步骤: '1. 打开商品详情\n2. 点击加入购物车\n3. 查看购物车角标',
+    预期结果: '购物车数量 +1，金额合计正确',
+    测试数据: 'SKU-001'
+  }]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), '用例模版')
+  XLSX.writeFile(wb, '用例导入模版.xlsx')
+  ElMessage.success('已导出导入模版（示例行导入前请删除）')
+}
+
+/** 导入 XLSX：前端解析 → 预览确认 → 仅提交有效行；重复用例由后端查重跳过 */
+const importFileInput = ref(null)
+const importVisible = ref(false)
+const importRows = ref([])
+const importFileName = ref('')
+const importing = ref(false)
+const importValidCount = computed(() => importRows.value.filter((r) => r.valid).length)
+
+const onImportFile = async (e) => {
+  const file = e.target.files && e.target.files[0]
+  e.target.value = ''
+  if (!file) return
+  try {
+    const buf = await file.arrayBuffer()
+    const wb = XLSX.read(buf, { type: 'array' })
+    const sheet = wb.Sheets[wb.SheetNames[0]]
+    const raw = sheet ? XLSX.utils.sheet_to_json(sheet) : []
+    const rows = raw.map((r) => {
+      const title = String(r['标题'] ?? '').trim()
+      const moduleName = String(r['模块'] ?? '').trim()
+      const reason = !title ? '标题为空' : (!moduleName ? '模块为空' : '')
+      return {
+        title, moduleName, reason, valid: !reason,
+        projectName: String(r['项目'] ?? '').trim(),
+        submoduleName: String(r['子模块'] ?? '').trim(),
+        priority: String(r['优先级'] ?? '').trim() || 'P1',
+        type: String(r['类型'] ?? '').trim() || '功能',
+        linkedBugNo: String(r['关联Bug'] ?? '').trim(),
+        preconditions: String(r['前置条件'] ?? '').trim(),
+        steps: String(r['测试步骤'] ?? '').trim(),
+        expected: String(r['预期结果'] ?? '').trim(),
+        testData: String(r['测试数据'] ?? '').trim()
+      }
+    })
+    if (!rows.length) {
+      ElMessage.info('未解析到任何用例行（需含“标题”等中文表头）')
+      return
+    }
+    importFileName.value = file.name
+    importRows.value = rows
+    importVisible.value = true
+  } catch (err) {
+    ElMessage.error('文件解析失败，请确认是有效的 XLSX 文件')
+  }
+}
+
+const confirmImport = async () => {
+  const valid = importRows.value.filter((r) => r.valid)
+  if (!valid.length) {
+    ElMessage.warning('没有可导入的有效用例')
+    return
+  }
+  importing.value = true
+  try {
+    const res = await apiCaseImport({
+      cases: valid.map(({ valid: _v, reason: _r, ...c }) => c)
+    })
+    ElMessage.success(`导入 ${res.imported} 条${res.skipped ? `，跳过重复 ${res.skipped} 条` : ''}`)
+    importVisible.value = false
+    importRows.value = []
+    importFileName.value = ''
+    await load()
+    await loadTree()
+  } finally {
+    importing.value = false
+  }
 }
 
 /** 创建执行：先弹窗输入批次名，再勾选用例生成执行批次（6.11 W3） */
@@ -323,10 +402,6 @@ onMounted(async () => {
         <h2>测试用例资产库</h2>
         <p>按项目、模块、子模块组织，可编辑、执行、关联 Bug、生成回归与报告。</p>
       </div>
-      <div class="page-actions">
-        <button class="button" @click="exportCases('xlsx')"><Download />导出 XLSX</button>
-        <button class="button primary" @click="openCreate"><Plus />新增用例</button>
-      </div>
     </div>
 
     <div class="tabs">
@@ -360,7 +435,7 @@ onMounted(async () => {
         <button @click="bulkJointAnalysis">联合分析</button>
         <button @click="router.push('/regression')">生成回归</button>
         <button @click="router.push('/reports')">生成报告</button>
-        <button @click="exportCases('csv', selection)">下载 CSV</button>
+        <button @click="exportCases(selection)">下载 XLSX</button>
         <button @click="selection = []">清空选择</button>
       </div>
 
@@ -399,8 +474,12 @@ onMounted(async () => {
         <section class="panel table-panel">
           <div class="table-summary">
             <span>共 <strong>{{ total }}</strong> 条 · P0 <strong class="danger-text">{{ p0Count }}</strong></span>
-            <button class="icon-button" title="备份 JSON" @click="exportCases('json')"><Archive /></button>
+            <div style="display: flex; gap: 8px">
+              <button class="button" @click="importFileInput?.click()"><Upload />导入 XLSX</button>
+              <button class="button" @click="exportTemplate()"><Download />导出模版</button>
+            </div>
           </div>
+          <input ref="importFileInput" type="file" accept=".xlsx" style="display: none" @change="onImportFile">
           <div class="table-wrap">
             <table>
               <thead>
@@ -622,6 +701,42 @@ onMounted(async () => {
       </template>
     </TModal>
 
+    <TModal v-if="importVisible" title="导入 XLSX 预览" :width="720" @close="importVisible = false">
+      <p style="font-size: 12px; color: var(--muted); margin: 0 0 10px">
+        {{ importFileName }} · 共 {{ importRows.length }} 行，有效 <b>{{ importValidCount }}</b> 条
+        <template v-if="importRows.length > importValidCount">，无效 {{ importRows.length - importValidCount }} 条（灰色行不会导入）</template>
+        ；与库中标题+模块相同的重复用例提交时自动跳过
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>标题</th>
+              <th>模块</th>
+              <th>优先级</th>
+              <th>类型</th>
+              <th>校验</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(r, i) in importRows" :key="i" :style="r.valid ? '' : 'color: #9a9e94'">
+              <td>{{ r.title || '（空）' }}</td>
+              <td>{{ [r.projectName, r.moduleName, r.submoduleName].filter(Boolean).join(' / ') || '（空）' }}</td>
+              <td>{{ r.priority }}</td>
+              <td>{{ r.type }}</td>
+              <td>{{ r.valid ? '可导入' : r.reason }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <template #footer>
+        <button class="button" @click="importVisible = false">取消</button>
+        <button class="button primary" :disabled="importing || !importValidCount" @click="confirmImport">
+          {{ importing ? '导入中…' : `导入 ${importValidCount} 条有效用例` }}
+        </button>
+      </template>
+    </TModal>
+
     <TDrawer
       v-if="detailVisible && detail" eyebrow="DETAIL VIEW"
       :title="detail.title" :subtitle="detail.caseNo" @close="detailVisible = false"
@@ -657,6 +772,7 @@ onMounted(async () => {
         <p>{{ detail.testData }}</p>
       </section>
       <div class="drawer-actions">
+        <button v-if="detail.status === '废弃'" class="button danger" @click="removeCase">删除用例</button>
         <button class="button" @click="copyCase(detail)">复制用例</button>
         <button class="button primary" @click="openEdit(detail)">编辑并升版</button>
       </div>

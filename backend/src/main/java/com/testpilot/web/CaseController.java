@@ -63,6 +63,12 @@ public class CaseController {
         return ApiResponse.ok(caseService.create(body));
     }
 
+    /** XLSX 批量导入（前端解析行，后端查重落库，重复/无效行跳过） */
+    @PostMapping("/import")
+    public ApiResponse<Map<String, Object>> importCases(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(caseService.importCases(body));
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<TestCase> detail(@PathVariable Long id) {
         return ApiResponse.ok(caseService.detail(id));
@@ -77,6 +83,13 @@ public class CaseController {
     @PostMapping("/{id}/copy")
     public ApiResponse<TestCase> copy(@PathVariable Long id) {
         return ApiResponse.ok(caseService.copy(id));
+    }
+
+    /** 删除用例（仅废弃状态可删，物理删除） */
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable Long id) {
+        caseService.delete(id);
+        return ApiResponse.ok(null);
     }
 
     /** 用例执行批次（6.11 W3）：创建 / 列表 / 详情 / 逐条登记 */
