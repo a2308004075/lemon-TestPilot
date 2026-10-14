@@ -408,7 +408,8 @@ onMounted(async () => {
                   <th style="width: 36px">
                     <input type="checkbox" :checked="allSelected" @click.prevent="toggleAll">
                   </th>
-                  <th>用例</th>
+                  <th>用例编号</th>
+                  <th>用例标题</th>
                   <th>模块</th>
                   <th>优先级</th>
                   <th>类型</th>
@@ -423,9 +424,9 @@ onMounted(async () => {
                   <td style="cursor: default" @click.stop>
                     <input type="checkbox" :checked="selection.some((r) => r.id === c.id)" @change="toggleRow(c)">
                   </td>
+                  <td>{{ c.caseNo }}</td>
                   <td>
                     <strong>{{ c.title }}</strong>
-                    <small class="id">{{ c.caseNo }}</small>
                   </td>
                   <td>{{ shortModule(c) }}</td>
                   <td><Badge :value="c.priority" /></td>
@@ -436,7 +437,7 @@ onMounted(async () => {
                   <td>v{{ c.version }}</td>
                 </tr>
                 <tr v-if="!rows.length">
-                  <td colspan="9" style="text-align: center; color: #9a9e94; cursor: default">没有匹配的用例</td>
+                  <td colspan="10" style="text-align: center; color: #9a9e94; cursor: default">没有匹配的用例</td>
                 </tr>
               </tbody>
             </table>

@@ -53,6 +53,14 @@ public class CaseService {
     private static final DateTimeFormatter BATCH_TITLE_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
+    /** 用例编号：TC + 生成时刻时间戳（yyyyMMddHHmmss），如 TC-20261014143135 */
+    private static final DateTimeFormatter CASE_NO_FMT =
+            DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
+    /** 执行批次号：RT + 创建时刻时间戳（yyyyMMddHHmmss），如 RT-20261014143536 */
+    private static final DateTimeFormatter BATCH_NO_FMT =
+            DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
     public Map<String, Object> list(String keyword, String moduleName, String submoduleName,
                                     String priority, String status, int page, int size) {
         List<TestCase> all = caseRepo.findAllByOrderByCreatedDateDescIdDesc();
@@ -399,22 +407,38 @@ public class CaseService {
     }
 
     private String nextCaseNo() {
-        long max = caseRepo.findAll().stream().mapToLong(TestCase::getId).max().orElse(0L);
-        return "TC-" + String.format("%04d", max + 1);
+        String no = "TC-" + LocalDateTime.now().format(CASE_NO_FMT);
+        // 同一秒内重复创建时顺延等待，避免 uk_case_no 唯一约束冲突
+        int guard = 0;
+        while (caseRepo.existsByCaseNo(no) && guard < 20) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            no = "TC-" + LocalDateTime.now().format(CASE_NO_FMT);
+            guard++;
+        }
+        return no;
     }
 
-    /** 生成批次号：YYYYMMDD + 当日三位递增序号 */
+    /** 生成批次号：RT + 创建时刻时间戳（yyyyMMddHHmmss） */
     private String nextBatchNo() {
-        String day = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        String maxNo = batchRepo.findMaxBatchNoByPrefix(day);
-        int seq = 1;
-        if (maxNo != null && maxNo.length() >= day.length() + 3) {
+        String no = "RT-" + LocalDateTime.now().format(BATCH_NO_FMT);
+        // 同一秒内重复创建时顺延等待，避免批次号唯一约束冲突
+        int guard = 0;
+        while (batchRepo.existsByBatchNo(no) && guard < 20) {
             try {
-                seq = Integer.parseInt(maxNo.substring(day.length())) + 1;
-            } catch (NumberFormatException ignored) {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             }
+            no = "RT-" + LocalDateTime.now().format(BATCH_NO_FMT);
+            guard++;
         }
-        return day + String.format("%03d", seq);
+        return no;
     }
 
     private static boolean contains(String text, String kw) {

@@ -19,4 +19,6 @@ public interface TestCaseRepository extends JpaRepository<TestCase, Long> {
     long countByPriority(String priority);
 
     long countByStatus(String status);
+
+    boolean existsByCaseNo(String caseNo);
 }
