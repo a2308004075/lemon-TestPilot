@@ -1,6 +1,7 @@
 package com.testpilot.service;
 
 import com.testpilot.common.BizException;
+import com.testpilot.common.JsonUtil;
 import com.testpilot.entity.KbItem;
 import com.testpilot.entity.RunTaskSnapshot;
 import com.testpilot.entity.TaskRecord;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -143,6 +145,7 @@ public class KbService {
         kb.setVersion(1);
         kb.setStatus("待审核");
         kb.setBody(kbBody);
+        kb.setSummary(str(body.get("summary")));
         kb.setSourceTask("人工维护");
         kb.setReviewNote("");
         kb.setRefCount(0);
@@ -165,6 +168,7 @@ public class KbService {
         kb.setVersion(1);
         kb.setStatus("待审核");
         kb.setBody(buildTaskBody(task));
+        kb.setSummary(buildTaskSummary(task));
         kb.setSourceTask(task.getTaskNo());
         kb.setReviewNote("");
         kb.setRefCount(0);
@@ -198,6 +202,31 @@ public class KbService {
         return sb.toString();
     }
 
+    /** 从任务结构化输出中提取一句话摘要，优先取建议/原因等列表首条 */
+    @SuppressWarnings("unchecked")
+    private static String buildTaskSummary(TaskRecord task) {
+        String output = task.getOutputJson() == null ? "" : task.getOutputJson().trim();
+        if (output.isEmpty()) {
+            return "（无结构化输出摘要）";
+        }
+        Map<String, Object> map = JsonUtil.readMap(output);
+        List<String> candidateKeys = Arrays.asList(
+                "suggestions", "recommended_logs", "optimization_suggestions", "possible_causes");
+        for (String key : candidateKeys) {
+            Object val = map.get(key);
+            if (val instanceof List && !((List<?>) val).isEmpty()) {
+                Object first = ((List<?>) val).get(0);
+                if (first instanceof String) {
+                    String s = ((String) first).trim();
+                    if (!s.isEmpty()) {
+                        return s.length() > 120 ? s.substring(0, 120) + "…" : s;
+                    }
+                }
+            }
+        }
+        return output.length() > 120 ? output.substring(0, 120) + "…" : output;
+    }
+
     private static String orDefault(String value) {
         return value == null ? "" : value;
     }
@@ -217,6 +246,9 @@ public class KbService {
         }
         if (body.containsKey("body") && !str(body.get("body")).isEmpty()) {
             kb.setBody(str(body.get("body")));
+        }
+        if (body.containsKey("summary")) {
+            kb.setSummary(str(body.get("summary")));
         }
         kb.setVersion(kb.getVersion() + 1);
         return kbRepo.save(kb);

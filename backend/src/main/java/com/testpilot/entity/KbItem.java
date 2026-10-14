@@ -51,6 +51,10 @@ public class KbItem extends TimestampedEntity {
     @Column(name = "body", columnDefinition = "TEXT")
     private String body;
 
+    /** 卡片摘要：一句话精炼描述，用于已入库经验列表展示 */
+    @Column(name = "summary", columnDefinition = "TEXT")
+    private String summary;
+
     @Column(name = "source_task")
     private String sourceTask;
 

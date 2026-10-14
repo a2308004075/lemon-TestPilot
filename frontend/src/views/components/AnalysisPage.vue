@@ -134,17 +134,23 @@
 
     <!-- 已入库经验 -->
     <div v-else style="margin-top: 18px">
+      <div class="panel-title" style="margin-bottom: 14px">
+        <div>
+          <h3>{{ kbCategoryTitle }}</h3>
+          <p>审核发布后可被分析任务引用</p>
+        </div>
+      </div>
       <div v-if="kbItems.length" class="knowledge-cards">
-        <button v-for="k in kbItems" :key="k.id" @click="router.push('/knowledge')">
+        <button v-for="k in kbItems" :key="k.id" @click="viewKb(k)">
           <div class="kb-badges">
             <Badge :value="k.category" />
             <Badge :value="k.risk" />
             <Badge :value="k.status || '—'" />
           </div>
           <h3>{{ k.title }}</h3>
-          <p>{{ (k.body || '').slice(0, 90) }}</p>
+          <p>{{ k.summary || '暂无摘要' }}</p>
           <footer>
-            <span>{{ k.moduleName || k.sourceTask }}</span>
+            <span>{{ kbModuleText(k) || '通用' }}</span>
             <ChevronRight />
           </footer>
         </button>
@@ -203,19 +209,77 @@
         <p v-else style="font-size: 12px; color: var(--muted)">暂无操作记录</p>
       </div>
     </TDrawer>
+
+    <!-- 知识详情抽屉 -->
+    <TDrawer v-if="kbDetailVisible && kbDetail" eyebrow="KNOWLEDGE DETAIL" :title="kbDetail.kb.title"
+             :subtitle="kbDetail.kb.kbNo" @close="kbDetailVisible = false">
+      <div class="detail-badges">
+        <span class="badge">{{ kbDetail.kb.category }}</span>
+        <Badge :value="kbDetail.kb.risk" />
+        <Badge :value="kbDetail.kb.status" />
+        <span class="wb-id">v{{ kbDetail.kb.version }}</span>
+      </div>
+      <div class="detail-grid">
+        <div><span>所属模块</span><strong>{{ kbModuleText(kbDetail.kb) || '通用' }}</strong></div>
+        <div><span>来源任务</span><strong>{{ kbDetail.kb.sourceTask || '—' }}</strong></div>
+        <div><span>创建时间</span><strong>{{ fmtTime(kbDetail.kb.createdAt) }}</strong></div>
+        <div><span>引用次数</span><strong>{{ kbDetail.kb.refCount }}（撤销将被阻止）</strong></div>
+      </div>
+      <div class="detail-section">
+        <h3>摘要</h3>
+        <p>{{ kbDetail.kb.summary || '暂无摘要' }}</p>
+      </div>
+      <div class="detail-section">
+        <h3>关联影响</h3>
+        <ul v-if="kbDetail.related.length">
+          <li v-for="(r, i) in kbDetail.related" :key="i">{{ r }}</li>
+        </ul>
+        <p v-else>暂无引用</p>
+      </div>
+      <div class="detail-section">
+        <h3>知识正文</h3>
+        <pre>{{ kbDetail.kb.body }}</pre>
+      </div>
+      <div class="detail-section">
+        <h3>审核信息</h3>
+        <p>{{ kbDetail.kb.reviewNote || '暂无审核备注' }}</p>
+      </div>
+      <div class="drawer-actions">
+        <template v-if="kbDetail.kb.status === '待审核'">
+          <button class="button" @click="reviewKb('reject')">驳回</button>
+          <button class="button primary" @click="reviewKb('approve')">审核通过并发布</button>
+        </template>
+        <template v-if="kbDetail.kb.status === '已发布'">
+          <button class="button" @click="editKb(kbDetail.kb)">编辑内容</button>
+          <button class="button danger" @click="revokeKb(kbDetail.kb)"><RotateCcw />撤销入库</button>
+        </template>
+      </div>
+      <div class="detail-section">
+        <h3>操作记录</h3>
+        <div v-if="kbAudits.length" class="timeline">
+          <div v-for="a in kbAudits" :key="a.id">
+            <i></i>
+            <span>
+              <strong>{{ a.action }}</strong>
+              <small>{{ fmtTime(a.createdAt) }}{{ a.detail ? ' · ' + a.detail : '' }}</small>
+            </span>
+          </div>
+        </div>
+        <p v-else style="font-size: 12px; color: var(--muted)">暂无操作记录</p>
+      </div>
+    </TDrawer>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, watch, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Plus, Sparkles, Search, X, AlertTriangle, Check, Paperclip, ChevronRight, BookOpen
+  Plus, Sparkles, Search, X, AlertTriangle, Check, Paperclip, ChevronRight, BookOpen, RotateCcw
 } from 'lucide-vue-next'
 import {
   apiTaskCreate, apiTaskCompleteness, apiTasks, apiTaskDetail, apiTaskReview, apiTaskToKnowledge,
-  apiKbTaskSourced, apiCaseModules, apiAudit
+  apiKbTaskSourced, apiKbDetail, apiKbReview, apiKbRevoke, apiCaseModules, apiAudit
 } from '../../api'
 import { consumeAnalysisPrefill } from '../../utils/analysisPrefill'
 import { fmtTime, fmtDate } from '../../utils/format'
@@ -227,7 +291,13 @@ const props = defineProps({
   cfg: { type: Object, required: true }
 })
 
-const router = useRouter()
+const KB_CATEGORY_TITLES = {
+  bug_analysis: '历史 Bug 库',
+  log_triage: '日志规律库',
+  sql_analysis: 'SQL 经验库'
+}
+const kbCategoryTitle = computed(() => KB_CATEGORY_TITLES[props.cfg.taskType] || '已入库经验')
+
 const tab = ref('create')
 const form = ref({ title: '', context: '', risk: 'P1' })
 const modulePath = ref('')
@@ -244,6 +314,9 @@ const detail = ref(null)
 const taskAudits = ref([])
 
 const kbItems = ref([])
+const kbDetailVisible = ref(false)
+const kbDetail = ref(null)
+const kbAudits = ref([])
 
 // 申请入知识库前置条件：三类专项任务 + 复核通过 + 尚未入库
 const canToKnowledge = (task) => {
@@ -254,6 +327,36 @@ const canToKnowledge = (task) => {
 }
 
 const moduleText = (t) => [t.projectName, t.moduleName, t.submoduleName].filter(Boolean).join(' / ')
+const kbModuleText = (k) => [k.projectName, k.moduleName, k.submoduleName].filter(Boolean).join(' / ')
+
+const viewKb = async (k) => {
+  kbDetail.value = await apiKbDetail(k.id)
+  kbDetailVisible.value = true
+  kbAudits.value = await apiAudit({ entityType: 'kb', entityNo: kbDetail.value.kb.kbNo })
+}
+
+const reviewKb = async (action) => {
+  const kb = kbDetail.value.kb
+  await apiKbReview(kb.id, { action, note: '' })
+  ElMessage.success(action === 'approve' ? '已审核通过并发布' : '已驳回')
+  kbDetailVisible.value = false
+  loadKb()
+}
+
+const editKb = (kb) => {
+  ElMessage.info('知识编辑将在后续版本提供，可撤销后重新入库')
+}
+
+const revokeKb = async (kb) => {
+  try {
+    await apiKbRevoke(kb.id)
+    ElMessage.success('已撤销入库')
+    kbDetailVisible.value = false
+    loadKb()
+  } catch (e) {
+    // 拦截器已提示：被引用时阻止
+  }
+}
 
 const toKnowledge = async (task) => {
   const saved = await apiTaskToKnowledge(task.id)
@@ -355,7 +458,8 @@ const viewTask = async (row) => {
 }
 
 const loadKb = async () => {
-  kbItems.value = await apiKbTaskSourced({})
+  // 按当前入口分类过滤，与 kbCategoryTitle 口径一致（taskType 不在映射内时后端返回全量兜底）
+  kbItems.value = await apiKbTaskSourced({ category: KB_CATEGORY_TITLES[props.cfg.taskType] })
 }
 
 watch(tab, (t) => {
