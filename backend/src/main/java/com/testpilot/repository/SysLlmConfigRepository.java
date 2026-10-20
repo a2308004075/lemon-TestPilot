@@ -12,5 +12,8 @@ public interface SysLlmConfigRepository extends JpaRepository<SysLlmConfig, Long
 
     List<SysLlmConfig> findByEnabledTrue();
 
+    /** 按用途取启用配置：chat / embedding */
+    List<SysLlmConfig> findByEnabledTrueAndPurpose(String purpose);
+
     Optional<SysLlmConfig> findByVendorCode(String vendorCode);
 }

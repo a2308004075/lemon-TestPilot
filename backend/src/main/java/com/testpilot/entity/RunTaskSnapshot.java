@@ -43,6 +43,10 @@ public class RunTaskSnapshot {
     @Column(name = "missing_json", columnDefinition = "VARCHAR(1000)")
     private String missingJson;
 
+    /** 本次加载的知识 [{id,title,version,score,method}] */
+    @Column(name = "knowledge_json", columnDefinition = "TEXT")
+    private String knowledgeJson;
+
     @Column(name = "output_json", columnDefinition = "LONGTEXT")
     private String outputJson;
 }

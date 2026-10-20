@@ -61,6 +61,12 @@ public class ConfigController {
         return ApiResponse.ok(configService.llmList());
     }
 
+    /** 新增模型配置（同厂商可多行：chat / embedding 用途隔离） */
+    @PostMapping("/llm")
+    public ApiResponse<SysLlmConfig> llmCreate(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(configService.llmCreate(body));
+    }
+
     @PutMapping("/llm/{id}")
     public ApiResponse<SysLlmConfig> llmUpdate(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(configService.llmUpdate(id, body));

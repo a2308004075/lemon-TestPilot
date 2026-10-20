@@ -26,6 +26,10 @@ public class SysLlmConfig {
     @Column(name = "vendor_name")
     private String vendorName;
 
+    /** 用途：chat / embedding（同厂商可各配一行） */
+    @Column(name = "purpose")
+    private String purpose;
+
     @Column(name = "base_url")
     private String baseUrl;
 

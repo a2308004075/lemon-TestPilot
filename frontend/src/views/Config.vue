@@ -69,19 +69,35 @@
             <span class="wb-mini-icon"><Bot /></span>
             <span>
               <strong style="font-size: 12px">{{ row.vendorName }}</strong>
-              <small>{{ row.modelName || '未配置' }}</small>
+              <small>{{ row.purpose === 'embedding' ? '向量检索' : '对话' }} · {{ row.modelName || '未配置' }}</small>
             </span>
             <i :class="{ on: row.enabled }"></i>
           </button>
+          <button class="text-button" style="margin-top: 8px" @click="startCreateLlm"><Plus /> 新增模型配置</button>
         </div>
       </div>
 
-      <div v-if="current" class="panel">
+      <div v-if="current || creating" class="panel">
         <div class="panel-title">
           <div>
-            <h3>{{ current.vendorName }} 配置</h3>
+            <h3>{{ creating ? '新增模型配置' : current.vendorName + ' 配置' }}</h3>
             <p>API Key 加密保存至本机密钥库，不写入数据库</p>
           </div>
+        </div>
+        <div v-if="creating" class="field">
+          <span>厂商名称</span>
+          <input v-model="llmForm.vendorName" placeholder="如 通义千问（向量）" />
+        </div>
+        <div class="field">
+          <span>用途</span>
+          <select v-model="llmForm.purpose">
+            <option value="chat">chat（对话分析）</option>
+            <option value="embedding">embedding（向量检索）</option>
+          </select>
+        </div>
+        <div v-if="llmForm.purpose === 'embedding'" class="warning" style="margin-bottom: 12px">
+          <AlertTriangle />
+          <p><strong>向量检索提示</strong><br />语义检索需要调用 /embeddings 接口：DeepSeek 官方暂无此端点，请选择 OpenAI 兼容或通义等支持嵌入的厂商；模型名示例 text-embedding-3-small、text-embedding-v3。</p>
         </div>
         <div class="field">
           <span>Base URL</span>
@@ -123,7 +139,8 @@
         </div>
         <div class="page-actions">
           <button class="button primary" @click="saveLlm"><Check /> 保存配置</button>
-          <button class="button" :disabled="testing" @click="testLlm"><RefreshCw /> {{ testing ? '测试中…' : '测试连接' }}</button>
+          <button v-if="!creating" class="button" :disabled="testing" @click="testLlm"><RefreshCw /> {{ testing ? '测试中…' : '测试连接' }}</button>
+          <button v-if="creating" class="button" @click="cancelCreateLlm">取消</button>
         </div>
       </div>
     </div>
@@ -200,7 +217,7 @@ import {
 } from 'lucide-vue-next'
 import {
   apiConfigModules, apiConfigModuleCreate, apiConfigModuleToggle,
-  apiConfigLlm, apiConfigLlmUpdate, apiConfigLlmTest,
+  apiConfigLlm, apiConfigLlmCreate, apiConfigLlmUpdate, apiConfigLlmTest,
   apiConfigTemplates, apiConfigTemplateUpdate,
   apiConfigKbRules, apiConfigKbRuleSave
 } from '../api'
@@ -243,6 +260,7 @@ const moduleForm = ref({ project: '', module: '', submodule: '' })
 // 大模型
 const llms = ref([])
 const current = ref(null)
+const creating = ref(false)
 const llmForm = ref({})
 const testing = ref(false)
 
@@ -295,8 +313,11 @@ const loadLlms = async () => {
 }
 
 const selectLlm = (row) => {
+  creating.value = false
   current.value = row
   llmForm.value = {
+    vendorName: row.vendorName || '',
+    purpose: row.purpose || 'chat',
     baseUrl: row.baseUrl || '',
     modelName: row.modelName || '',
     apiKey: '',
@@ -307,7 +328,45 @@ const selectLlm = (row) => {
   }
 }
 
+// 新增模型配置（同厂商可多行：chat / embedding 用途隔离）
+const startCreateLlm = () => {
+  creating.value = true
+  current.value = null
+  llmForm.value = {
+    vendorName: '',
+    purpose: 'chat',
+    baseUrl: '',
+    modelName: '',
+    apiKey: '',
+    temperature: '',
+    timeoutSeconds: '',
+    maxOutput: '',
+    enabled: true
+  }
+}
+
+const cancelCreateLlm = () => {
+  creating.value = false
+  if (llms.value.length) {
+    selectLlm(llms.value[0])
+  }
+}
+
 const saveLlm = async () => {
+  if (creating.value) {
+    if (!llmForm.value.vendorName || !llmForm.value.vendorName.trim()) {
+      ElMessage.warning('厂商名称不能为空')
+      return
+    }
+    const saved = await apiConfigLlmCreate(llmForm.value)
+    ElMessage.success('已新增模型配置（API Key 加密存储，数据库仅记录掩码）')
+    await loadLlms()
+    const row = llms.value.find((l) => l.id === saved.id)
+    if (row) {
+      selectLlm(row)
+    }
+    return
+  }
   await apiConfigLlmUpdate(current.value.id, llmForm.value)
   ElMessage.success('已保存（API Key 加密存储，数据库仅记录掩码）')
   await loadLlms()

@@ -3,10 +3,14 @@ package com.testpilot.service;
 import com.testpilot.common.BizException;
 import com.testpilot.common.JsonUtil;
 import com.testpilot.entity.KbItem;
+import com.testpilot.entity.KbRetrievalHit;
+import com.testpilot.entity.RunRecord;
 import com.testpilot.entity.RunTaskSnapshot;
 import com.testpilot.entity.TaskRecord;
 import com.testpilot.engine.TaskTypes;
 import com.testpilot.repository.KbItemRepository;
+import com.testpilot.repository.KbRetrievalHitRepository;
+import com.testpilot.repository.RunRecordRepository;
 import com.testpilot.repository.RunTaskSnapshotRepository;
 import com.testpilot.repository.TaskRecordRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +35,15 @@ public class KbService {
     @Autowired
     private RunTaskSnapshotRepository snapshotRepo;
     @Autowired
+    private KbRetrievalHitRepository hitRepo;
+    @Autowired
+    private RunRecordRepository runRepo;
+    @Autowired
     private AuditService auditService;
+    @Autowired
+    private EmbeddingService embeddingService;
+    @Autowired
+    private RetrievalService retrievalService;
 
     public Map<String, Object> list(String keyword, String category, String status, String moduleName) {
         List<KbItem> all = kbRepo.findAllByOrderByIdAsc();
@@ -121,6 +133,53 @@ public class KbService {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("kb", kb);
         result.put("related", related);
+        return result;
+    }
+
+    /** 人侧语义/关键词搜索（知识库页搜索框）：委托 RetrievalService 三级降级 */
+    public Map<String, Object> search(String q, String mode) {
+        return retrievalService.search(q, mode);
+    }
+
+    /** 影响分析：硬引用（ref_count）+ 软引用命中（总数 + 最近 5 条） */
+    public Map<String, Object> impact(Long id) {
+        KbItem kb = kbRepo.findById(id)
+                .orElseThrow(() -> new BizException("知识不存在：" + id));
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        Map<String, Object> hardRef = new LinkedHashMap<String, Object>();
+        hardRef.put("type", "执行引用计数");
+        hardRef.put("count", kb.getRefCount() == null ? 0 : kb.getRefCount());
+        hardRef.put("label", "引用计数 > 0 时撤销被阻止");
+        result.put("hardRef", hardRef);
+        result.put("softHitCount", hitRepo.countByKbId(id));
+        List<Map<String, Object>> recentHits = new ArrayList<Map<String, Object>>();
+        for (KbRetrievalHit hit : hitRepo.findTop5ByKbIdOrderByCreatedAtDescIdDesc(id)) {
+            Map<String, Object> m = new LinkedHashMap<String, Object>();
+            RunRecord run = runRepo.findById(hit.getRunId()).orElse(null);
+            m.put("runId", hit.getRunId());
+            m.put("runNo", run == null ? "" : run.getRunNo());
+            m.put("runTitle", run == null ? "" : run.getTitle());
+            m.put("title", hit.getTitleSnapshot());
+            m.put("version", hit.getVersionSnapshot());
+            m.put("score", hit.getScore());
+            m.put("method", hit.getMethod());
+            m.put("createdAt", hit.getCreatedAt());
+            recentHits.add(m);
+        }
+        result.put("recentHits", recentHits);
+        return result;
+    }
+
+    /** 向量状态监控（知识库页状态条） */
+    public Map<String, Object> embeddingStatus() {
+        return embeddingService.status();
+    }
+
+    /** 手动全量重嵌（换嵌入模型后）；无配置抛业务异常提示 */
+    public Map<String, Object> reembed() {
+        Map<String, Object> result = embeddingService.reembedAll();
+        auditService.record("kb", "embeddings", "全量重嵌向量",
+                "成功 " + result.get("success") + " / 共 " + result.get("total"));
         return result;
     }
 
@@ -251,7 +310,12 @@ public class KbService {
             kb.setSummary(str(body.get("summary")));
         }
         kb.setVersion(kb.getVersion() + 1);
-        return kbRepo.save(kb);
+        KbItem saved = kbRepo.save(kb);
+        // 升版后旧向量立即过期：已发布知识异步重嵌（失败置 pending，检索自动降级）
+        if ("已发布".equals(saved.getStatus())) {
+            embeddingService.asyncEmbed(saved.getId());
+        }
+        return saved;
     }
 
     /** 审核：通过 / 驳回（同步来源任务的知识入库状态） */
@@ -272,6 +336,10 @@ public class KbService {
         auditService.record("kb", saved.getKbNo(),
                 "approve".equals(action) ? "审核通过" : "审核驳回",
                 saved.getTitle() + (note == null || note.isEmpty() ? "" : " · " + note));
+        if ("approve".equals(action)) {
+            // 发布即触发向量嵌入（fire-and-forget，失败置 pending 不阻断审核）
+            embeddingService.asyncEmbed(saved.getId());
+        }
         return saved;
     }
 

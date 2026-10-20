@@ -74,7 +74,7 @@ public class CaseController {
         return ApiResponse.ok(caseService.detail(id));
     }
 
-    /** 编辑并升版 */
+    /** 编辑用例（版本由用户手动维护，不再自动升版） */
     @PutMapping("/{id}")
     public ApiResponse<TestCase> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(caseService.update(id, body));

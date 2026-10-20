@@ -26,6 +26,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * 配置中心：三级模块、大模型厂商、输出格式模板、任务关联规则。
@@ -49,6 +50,8 @@ public class ConfigService {
     private CryptoService cryptoService;
     @Autowired
     private AuditService auditService;
+    @Autowired
+    private EmbeddingService embeddingService;
 
     // ---------------- 项目与模块 ----------------
 
@@ -169,6 +172,13 @@ public class ConfigService {
     public SysLlmConfig llmUpdate(Long id, Map<String, Object> body) {
         SysLlmConfig cfg = llmRepo.findById(id)
                 .orElseThrow(() -> new BizException("厂商配置不存在：" + id));
+        if (body.containsKey("purpose")) {
+            String purpose = str(body.get("purpose"));
+            if (!"chat".equals(purpose) && !"embedding".equals(purpose)) {
+                throw new BizException("用途只能是 chat 或 embedding");
+            }
+            cfg.setPurpose(purpose);
+        }
         if (body.containsKey("baseUrl")) {
             cfg.setBaseUrl(str(body.get("baseUrl")));
         }
@@ -210,10 +220,45 @@ public class ConfigService {
         return saved;
     }
 
+    /** 新增模型配置（用途隔离：同厂商可各配 chat / embedding 一行） */
+    public SysLlmConfig llmCreate(Map<String, Object> body) {
+        String vendorName = str(body.get("vendorName"));
+        if (vendorName.isEmpty()) {
+            throw new BizException("厂商名称不能为空");
+        }
+        String purpose = strOr(body.get("purpose"), "chat");
+        if (!"chat".equals(purpose) && !"embedding".equals(purpose)) {
+            throw new BizException("用途只能是 chat 或 embedding");
+        }
+        SysLlmConfig cfg = new SysLlmConfig();
+        cfg.setVendorCode("pv_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8));
+        cfg.setVendorName(vendorName);
+        cfg.setPurpose(purpose);
+        cfg.setBaseUrl(str(body.get("baseUrl")));
+        cfg.setModelName(str(body.get("modelName")));
+        String key = str(body.get("apiKey"));
+        cfg.setApiKey(key.isEmpty() ? "" : cryptoService.encrypt(key));
+        cfg.setTemperature(parseDecimal(body.get("temperature"), new BigDecimal("0.2")));
+        cfg.setTimeoutSeconds(parseInt(body.get("timeoutSeconds"), 60));
+        cfg.setMaxOutput(parseInt(body.get("maxOutput"), 4096));
+        cfg.setEnabled(body.containsKey("enabled") && Boolean.parseBoolean(body.get("enabled").toString()));
+        cfg.setUpdatedAt(LocalDateTime.now());
+        SysLlmConfig saved = llmRepo.save(cfg);
+        auditService.record("llm", saved.getVendorCode(), "新增模型配置",
+                saved.getVendorName() + " · " + purpose);
+        if (saved.getApiKey() != null && !saved.getApiKey().isEmpty()) {
+            saved.setApiKey(maskKey(cryptoService.decrypt(saved.getApiKey())));
+        }
+        return saved;
+    }
+
     public Map<String, Object> llmTest(Long id) {
         SysLlmConfig cfg = llmRepo.findById(id)
                 .orElseThrow(() -> new BizException("厂商配置不存在：" + id));
-        Map<String, Object> result = llmClient.testConnection(cfg);
+        // embedding 用途走 /embeddings 真实探测；chat 用途走 /chat/completions
+        Map<String, Object> result = "embedding".equals(cfg.getPurpose())
+                ? embeddingService.testEmbedding(cfg)
+                : llmClient.testConnection(cfg);
         auditService.record("llm", cfg.getVendorCode(), "连接测试",
                 cfg.getVendorName() + " · " + (Boolean.TRUE.equals(result.get("ok")) ? "成功" : "失败"));
         return result;
@@ -380,6 +425,14 @@ public class ConfigService {
     private static int parseInt(Object value, int fallback) {
         try {
             return Integer.parseInt(str(value));
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static BigDecimal parseDecimal(Object value, BigDecimal fallback) {
+        try {
+            return new BigDecimal(str(value));
         } catch (Exception e) {
             return fallback;
         }

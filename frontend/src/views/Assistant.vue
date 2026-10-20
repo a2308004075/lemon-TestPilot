@@ -45,6 +45,15 @@ const routeIcon = (type) => {
 const run = computed(() => runResult.value?.run || null)
 const canReview = computed(() => run.value && run.value.reviewStatus === '待复核')
 
+/** 快照知识检索摘要：三级降级结果（semantic / keyword / none） */
+const knowledgeText = (s) => {
+  const list = s.knowledge || []
+  if (!list.length) return '未检索到相关知识（未虚构）'
+  const label = s.retrievalMethod === 'semantic' ? '语义检索' : '关键词检索'
+  const titles = list.map((k) => `${k.title}（v${k.version}）`).join('、')
+  return `${label}命中 ${list.length} 条：${titles}`
+}
+
 const moduleNameOf = (type) => {
   const e = (identifyResult.value?.checks || []).find((c) => c.taskType === type)
   return e ? (e.taskType === identifyResult.value.mainTask ? '主任务' : '辅助任务') : '辅助任务'
@@ -262,7 +271,7 @@ onMounted(async () => {
           <span class="wb-entry-icon"><component :is="routeIcon(s.taskType)" /></span>
           <div>
             <strong>{{ s.taskName }}</strong>
-            <small>引用范围：暂无知识事实引用 · 完整度 {{ s.completeness }}%</small>
+            <small>{{ knowledgeText(s) }} · 完整度 {{ s.completeness }}%</small>
           </div>
         </header>
         <pre>{{ JSON.stringify(s.output, null, 2) }}</pre>

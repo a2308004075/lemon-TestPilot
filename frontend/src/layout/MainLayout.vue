@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   Home, Sparkles, GitBranch, ListChecks, Bug, SquareTerminal, Database,
   ClipboardCheck, FileBarChart, BookOpen, Settings, Settings2, TestTube2,
-  PanelLeftClose, Menu, Plus
+  PanelLeftClose, Menu
 } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -51,14 +51,13 @@ const go = (path) => {
       </button>
       <nav>
         <button
-          v-for="(item, index) in nav"
+          v-for="item in nav"
           :key="item.path"
           :class="{ active: isActive(item.path) }"
           :title="item.label"
           @click="go(item.path)"
         >
           <span class="nav-icon"><component :is="item.icon" /></span>
-          <span class="nav-num">{{ String(index + 1).padStart(2, '0') }}</span>
           <span class="nav-text">{{ item.label }}</span>
         </button>
       </nav>
@@ -72,10 +71,6 @@ const go = (path) => {
         <div>
           <span class="eyebrow">PERSONAL WORKSPACE</span>
           <h1>{{ pageTitle }}</h1>
-        </div>
-        <div class="top-actions">
-          <button class="button subtle" @click="go('/knowledge')"><BookOpen />维护知识</button>
-          <button class="button primary" @click="go('/assistant')"><Plus />新建任务</button>
         </div>
       </header>
       <div class="content">

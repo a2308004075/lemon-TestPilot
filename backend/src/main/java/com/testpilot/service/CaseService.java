@@ -178,7 +178,9 @@ public class CaseService {
         c.setCaseNo(nextCaseNo());
         applyFields(c, body);
         c.setStatus("使用");
-        c.setVersion(1);
+        if (c.getVersion() == null || c.getVersion().isEmpty()) {
+            c.setVersion("v1");
+        }
         c.setCreatedDate(LocalDate.now());
         TestCase saved = caseRepo.save(c);
         auditService.record("case", saved.getCaseNo(), "新增用例",
@@ -191,14 +193,13 @@ public class CaseService {
                 .orElseThrow(() -> new BizException("用例不存在：" + id));
     }
 
-    /** 编辑并升版 */
+    /** 编辑用例：版本由用户手动维护，未传则保留原值 */
     public TestCase update(Long id, Map<String, Object> body) {
         TestCase c = detail(id);
         applyFields(c, body);
-        c.setVersion(c.getVersion() + 1);
         TestCase saved = caseRepo.save(c);
-        auditService.record("case", saved.getCaseNo(), "编辑升版",
-                "v" + saved.getVersion() + " · " + saved.getTitle());
+        auditService.record("case", saved.getCaseNo(), "编辑用例",
+                saved.getVersion() + " · " + saved.getTitle());
         return saved;
     }
 
@@ -218,7 +219,7 @@ public class CaseService {
         c.setExpected(src.getExpected());
         c.setTestData(src.getTestData());
         c.setStatus("使用");
-        c.setVersion(1);
+        c.setVersion("v1");
         c.setLinkedBugNo(src.getLinkedBugNo());
         c.setCreatedDate(LocalDate.now());
         TestCase saved = caseRepo.save(c);
@@ -288,7 +289,7 @@ public class CaseService {
             c.setCaseNo(no);
             applyFields(c, row);
             c.setStatus("使用");
-            c.setVersion(1);
+            c.setVersion("v1");
             c.setCreatedDate(LocalDate.now());
             caseRepo.save(c);
             imported++;
@@ -485,6 +486,11 @@ public class CaseService {
         c.setExpected(str(body.get("expected")));
         c.setTestData(str(body.get("testData")));
         c.setLinkedBugNo(str(body.get("linkedBugNo")));
+        // 版本为用户手动维护的自由文本：仅在传入非空值时应用，否则保持原值（新增时由 create 兜底为 v1）
+        String version = str(body.get("version"));
+        if (!version.isEmpty()) {
+            c.setVersion(version);
+        }
     }
 
     private String nextCaseNo() {

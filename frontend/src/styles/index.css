@@ -57,18 +57,17 @@ svg { width: 18px; height: 18px; }
 .collapse { position: absolute; right: -14px; top: 35px; width: 28px; height: 28px; border-radius: 50%; border: 1px solid #3a3c34; background: #262822; color: #dfe0d9; display: grid; place-items: center; z-index: 21; }
 .collapse svg { width: 14px; }
 .sidebar nav { display: flex; flex-direction: column; gap: 4px; padding-top: 24px; overflow: auto; }
-.sidebar nav button { display: grid; grid-template-columns: 22px 26px 1fr; align-items: center; gap: 8px; background: transparent; color: #aeb1a7; border: 0; border-radius: 12px; padding: 11px 12px; text-align: left; font-weight: 600; transition: .18s; }
+.sidebar nav button { display: grid; grid-template-columns: 22px 1fr; align-items: center; gap: 8px; background: transparent; color: #aeb1a7; border: 0; border-radius: 12px; padding: 11px 12px; text-align: left; font-weight: 600; transition: .18s; }
 .sidebar nav button:hover { background: #252720; color: white; }
 .sidebar nav button.active { background: var(--yellow); color: var(--ink); box-shadow: 0 12px 28px #0005; }
 .nav-icon { display: grid; }
 .nav-icon svg { width: 17px; }
-.nav-num { font-size: 10px; font-weight: 800; opacity: .58; }
 .side-status { margin-top: auto; border-top: 1px solid #35372f; padding: 18px 10px 0; display: flex; align-items: flex-start; gap: 9px; color: #b9bcb1; font-size: 12px; }
 .side-status i { width: 8px; height: 8px; background: #42d590; border-radius: 50%; box-shadow: 0 0 0 4px #42d59022; margin-top: 4px; flex: none; }
 .side-status small { color: #777c70; }
 .is-collapsed { grid-template-columns: 82px 1fr; }
 .is-collapsed .sidebar { width: 82px; }
-.is-collapsed .brand-copy, .is-collapsed .nav-num, .is-collapsed .nav-text, .is-collapsed .side-status span { display: none; }
+.is-collapsed .brand-copy, .is-collapsed .nav-text, .is-collapsed .side-status span { display: none; }
 .is-collapsed .brand { padding-left: 0; justify-content: center; }
 .is-collapsed .brand-mark { width: 42px; height: 42px; }
 .is-collapsed .sidebar nav button { grid-template-columns: 1fr; padding: 12px; place-items: center; }

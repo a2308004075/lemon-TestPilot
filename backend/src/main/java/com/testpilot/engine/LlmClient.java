@@ -43,7 +43,8 @@ public class LlmClient {
     }
 
     public SysLlmConfig findEnabled() {
-        for (SysLlmConfig cfg : llmRepo.findByEnabledTrue()) {
+        // 用途隔离：对话链路只取 purpose='chat'（embedding 用途不参与对话）
+        for (SysLlmConfig cfg : llmRepo.findByEnabledTrueAndPurpose("chat")) {
             if (cfg.getBaseUrl() != null && !cfg.getBaseUrl().trim().isEmpty()
                     && cfg.getApiKey() != null && !cfg.getApiKey().trim().isEmpty()) {
                 return cfg;

@@ -25,13 +25,7 @@ public interface KbItemRepository extends JpaRepository<KbItem, Long> {
     @Query("select k from KbItem k where k.sourceTask <> '人工维护' order by k.updatedAt desc")
     List<KbItem> findTaskSourced();
 
-    /** 知识引用检索：按分类与模块匹配（仅已发布） */
-    @Query("select k from KbItem k where k.status = '已发布' and k.category in :categories " +
-            "and (k.moduleName = :moduleName or k.submoduleName = :submoduleName) order by k.id asc")
-    List<KbItem> findPublishedByCategoriesAndModule(@Param("categories") List<String> categories,
-                                                    @Param("moduleName") String moduleName,
-                                                    @Param("submoduleName") String submoduleName);
-
+    /** 知识引用检索：按分类匹配（仅已发布；语义/关键词排序由 RetrievalService 完成） */
     @Query("select k from KbItem k where k.status = '已发布' and k.category in :categories order by k.id asc")
     List<KbItem> findPublishedByCategories(@Param("categories") List<String> categories);
 }

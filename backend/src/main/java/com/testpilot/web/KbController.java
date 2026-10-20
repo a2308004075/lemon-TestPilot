@@ -51,9 +51,23 @@ public class KbController {
         return ApiResponse.ok(kbService.taskSourced(category));
     }
 
+    /** 人侧语义/关键词搜索（mode=semantic|keyword，默认 semantic 走三级降级） */
+    @GetMapping("/search")
+    public ApiResponse<Map<String, Object>> search(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String mode) {
+        return ApiResponse.ok(kbService.search(q, mode));
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<Map<String, Object>> detail(@PathVariable Long id) {
         return ApiResponse.ok(kbService.detail(id));
+    }
+
+    /** 影响分析：硬引用（ref_count）+ 软引用命中（总数 + 最近 5 条） */
+    @GetMapping("/{id}/impact")
+    public ApiResponse<Map<String, Object>> impact(@PathVariable Long id) {
+        return ApiResponse.ok(kbService.impact(id));
     }
 
     @PostMapping
@@ -79,5 +93,17 @@ public class KbController {
     @PostMapping("/{id}/revoke")
     public ApiResponse<KbItem> revoke(@PathVariable Long id) {
         return ApiResponse.ok(kbService.revoke(id));
+    }
+
+    /** 向量状态监控（知识库页状态条） */
+    @GetMapping("/embeddings/status")
+    public ApiResponse<Map<String, Object>> embeddingStatus() {
+        return ApiResponse.ok(kbService.embeddingStatus());
+    }
+
+    /** 手动全量重嵌（换嵌入模型后；未配置 embedding 厂商时报错提示） */
+    @PostMapping("/embeddings/reembed")
+    public ApiResponse<Map<String, Object>> reembed() {
+        return ApiResponse.ok(kbService.reembed());
     }
 }

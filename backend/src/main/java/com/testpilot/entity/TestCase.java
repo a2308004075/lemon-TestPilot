@@ -58,8 +58,9 @@ public class TestCase extends TimestampedEntity {
     @Column(name = "status")
     private String status;
 
+    /** 版本（用户手动维护的自由文本，如 v1.0.1） */
     @Column(name = "version")
-    private Integer version;
+    private String version;
 
     @Column(name = "linked_bug_no")
     private String linkedBugNo;

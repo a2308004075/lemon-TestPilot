@@ -8,11 +8,11 @@ import com.testpilot.entity.RunStep;
 import com.testpilot.entity.RunTaskSnapshot;
 import com.testpilot.entity.SysLlmConfig;
 import com.testpilot.entity.TestCase;
-import com.testpilot.repository.KbItemRepository;
 import com.testpilot.repository.RunRecordRepository;
 import com.testpilot.repository.RunStepRepository;
 import com.testpilot.repository.RunTaskSnapshotRepository;
 import com.testpilot.repository.TestCaseRepository;
+import com.testpilot.service.RetrievalService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -25,8 +25,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 任务执行器：识别路由 → 完整度检查 → 知识引用 → 逐任务分析（LLM 优先，规则降级）
- * → 步骤落库 → 输出快照。执行中落实五条全局安全规则。
+ * 任务执行器：识别路由 → 完整度检查 → 三级降级检索（semantic → keyword → none）
+ * → 逐任务分析（LLM 优先，规则降级）→ 步骤落库 → 输出快照。执行中落实五条全局安全规则。
  *
  * 注：显式指定 bean 名，避免与 Spring Boot 自动配置的线程池 taskExecutor 别名冲突。
  */
@@ -46,23 +46,26 @@ public class TaskExecutor {
     @Autowired
     private RunStepRepository stepRepo;
     @Autowired
-    private KbItemRepository kbRepo;
-    @Autowired
     private TestCaseRepository caseRepo;
+    @Autowired
+    private RetrievalService retrievalService;
 
     /** 单个路由任务的执行结果 */
     public static class RouteOutput {
         public TaskRouter.Route route;
         public CompletenessChecker.Result check;
+        /** 三级降级检索结果（semantic / keyword / none） */
+        public RetrievalService.Result retrieval;
         public List<KbItem> kbRefs;
         public Map<String, Object> output;
         public String engineMode;
 
         RouteOutput(TaskRouter.Route route, CompletenessChecker.Result check,
-                    List<KbItem> kbRefs, Map<String, Object> output, String engineMode) {
+                    RetrievalService.Result retrieval, Map<String, Object> output, String engineMode) {
             this.route = route;
             this.check = check;
-            this.kbRefs = kbRefs;
+            this.retrieval = retrieval;
+            this.kbRefs = retrieval.items();
             this.output = output;
             this.engineMode = engineMode;
         }
@@ -80,7 +83,7 @@ public class TaskExecutor {
         String risk = determineRisk(inputText);
         List<RouteOutput> outputs = new ArrayList<RouteOutput>();
         for (TaskRouter.Route route : routes) {
-            outputs.add(analyzeRoute(route, inputText, projectName, moduleName, submoduleName, risk, true));
+            outputs.add(analyzeRoute(route, inputText, projectName, moduleName, submoduleName, risk));
         }
 
         RunRecord run = new RunRecord();
@@ -117,8 +120,12 @@ public class TaskExecutor {
             snapshot.setSeq(ro.route.seq);
             snapshot.setCompleteness(ro.check.completeness);
             snapshot.setMissingJson(JsonUtil.write(ro.check.missing));
+            snapshot.setKnowledgeJson(JsonUtil.write(knowledgeOf(ro.retrieval)));
             snapshot.setOutputJson(JsonUtil.write(ro.output));
             snapshotRepo.save(snapshot);
+
+            // 检索命中落软引用（可追溯，不参与撤销保护）
+            retrievalService.recordHits(run.getId(), ro.route.taskType, ro.retrieval);
 
             Map<String, Object> s = new LinkedHashMap<String, Object>();
             s.put("taskType", ro.route.taskType);
@@ -127,6 +134,8 @@ public class TaskExecutor {
             s.put("seq", ro.route.seq);
             s.put("completeness", ro.check.completeness);
             s.put("missing", ro.check.missing);
+            s.put("retrievalMethod", ro.retrieval.method);
+            s.put("knowledge", knowledgeOf(ro.retrieval));
             s.put("output", ro.output);
             snapshotList.add(s);
         }
@@ -136,14 +145,26 @@ public class TaskExecutor {
         int seq = 1;
         seq = addStep(steps, run.getId(), seq, "", "接收输入材料", "接收整段材料与所选模块");
         seq = addStep(steps, run.getId(), seq, "", "识别主任务与辅助任务", joinRoutes(routes));
-        Set<String> kbNos = new LinkedHashSet<String>();
+        int hitTotal = 0;
+        boolean anySemantic = false;
+        Set<String> hitTitles = new LinkedHashSet<String>();
         for (RouteOutput ro : outputs) {
-            for (KbItem kb : ro.kbRefs) {
-                kbNos.add(kb.getKbNo());
+            hitTotal += ro.retrieval.hits.size();
+            if (RetrievalService.METHOD_SEMANTIC.equals(ro.retrieval.method)) {
+                anySemantic = true;
+            }
+            for (RetrievalService.Hit h : ro.retrieval.hits) {
+                hitTitles.add(h.kb.getTitle());
             }
         }
-        seq = addStep(steps, run.getId(), seq, "", "匹配知识库引用",
-                kbNos.isEmpty() ? "无命中（不编造引用）" : "命中 " + joinStrings(new ArrayList<String>(kbNos)));
+        String kbDetail;
+        if (hitTotal == 0) {
+            kbDetail = "未检索到相关知识（未虚构）";
+        } else {
+            kbDetail = truncate((anySemantic ? "语义检索" : "关键词检索") + "命中 " + hitTotal + " 条："
+                    + joinStrings(new ArrayList<String>(hitTitles)), 500);
+        }
+        seq = addStep(steps, run.getId(), seq, "", "匹配知识库引用", kbDetail);
         for (RouteOutput ro : outputs) {
             for (String stepName : router.workflowSteps(ro.route.taskType)) {
                 String detail;
@@ -180,39 +201,40 @@ public class TaskExecutor {
     }
 
     /**
-     * 单页分析（Bug/日志/SQL 等页面）：单任务执行，不落 run 表。
+     * 单页分析（Bug/日志/SQL 等页面）：单任务执行，不落 run 表；
+     * 检索命中不落软引用表，仅随返回结果快照体现（不阻塞撤销）。
      */
     public Map<String, Object> executeSingleTask(String taskType, String inputText,
                                                  String projectName, String moduleName,
                                                  String submoduleName, String risk) {
         TaskRouter.Route route = new TaskRouter.Route(taskType, TaskTypes.nameOf(taskType), "main", 1,
                 new ArrayList<String>(), 0, "手动发起");
-        RouteOutput ro = analyzeRoute(route, inputText, projectName, moduleName, submoduleName, risk, true);
+        RouteOutput ro = analyzeRoute(route, inputText, projectName, moduleName, submoduleName, risk);
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("output", ro.output);
         result.put("completeness", ro.check.completeness);
         result.put("missing", ro.check.missing);
         result.put("engineMode", ro.engineMode);
         result.put("kbRefs", ro.kbRefs);
+        result.put("retrievalMethod", ro.retrieval.method);
         return result;
     }
 
     /**
-     * 案例验证用：只做分析，不累加知识引用计数、不落库。
+     * 案例验证用：只做分析，不落库、不记检索命中。
      */
     public RouteOutput analyzeForValidation(String taskType, String inputText,
                                              String projectName, String moduleName,
                                              String submoduleName, String risk) {
         TaskRouter.Route route = new TaskRouter.Route(taskType, TaskTypes.nameOf(taskType), "main", 1,
                 new ArrayList<String>(), 0, "验证执行");
-        return analyzeRoute(route, inputText, projectName, moduleName, submoduleName, risk, false);
+        return analyzeRoute(route, inputText, projectName, moduleName, submoduleName, risk);
     }
 
     // ---------------- 内部 ----------------
 
     private RouteOutput analyzeRoute(TaskRouter.Route route, String inputText, String projectName,
-                                     String moduleName, String submoduleName, String risk,
-                                     boolean incrementRefs) {
+                                     String moduleName, String submoduleName, String risk) {
         List<String> required = router.requiredFields(route.taskType);
         CompletenessChecker.Result check = CompletenessChecker.check(route.taskType, inputText, required);
 
@@ -224,8 +246,9 @@ public class TaskExecutor {
         ctx.setRisk(risk);
         ctx.setCompleteness(check.completeness);
         ctx.setMissing(check.missing);
-        List<KbItem> kbRefs = findKbRefs(route.taskType, moduleName, submoduleName);
-        ctx.setKbRefs(kbRefs);
+        // 三级降级检索（semantic → keyword → none）；命中为软引用，不累加 ref_count、不阻止撤销
+        RetrievalService.Result retrieval = retrievalService.retrieve(inputText, router.kbMappings(route.taskType));
+        ctx.setKbRefs(retrieval.items());
         if (TaskTypes.REGRESSION_LIST.equals(route.taskType)) {
             ctx.setHighRiskCases(findHighRiskCases());
         }
@@ -242,32 +265,7 @@ public class TaskExecutor {
         if (output == null) {
             output = ruleAnalyzer.analyze(route.taskType, ctx);
         }
-
-        // 引用计数（撤销入库将被阻止；案例验证不累加）
-        if (incrementRefs) {
-            for (KbItem kb : kbRefs) {
-                kb.setRefCount(kb.getRefCount() + 1);
-                kbRepo.save(kb);
-            }
-        }
-        return new RouteOutput(route, check, kbRefs, output, engineMode);
-    }
-
-    /** 知识引用检索：按入口映射分类 + 模块匹配（仅已发布） */
-    private List<KbItem> findKbRefs(String taskType, String moduleName, String submoduleName) {
-        List<String> categories = router.kbMappings(taskType);
-        if (categories.isEmpty()) {
-            return new ArrayList<KbItem>();
-        }
-        boolean hasModule = moduleName != null && !moduleName.trim().isEmpty();
-        List<KbItem> refs = hasModule
-                ? kbRepo.findPublishedByCategoriesAndModule(categories, moduleName.trim(),
-                        submoduleName == null ? "" : submoduleName.trim())
-                : kbRepo.findPublishedByCategories(categories);
-        if (refs.isEmpty() && hasModule) {
-            refs = kbRepo.findPublishedByCategories(categories);
-        }
-        return refs.size() > 5 ? new ArrayList<KbItem>(refs.subList(0, 5)) : refs;
+        return new RouteOutput(route, check, retrieval, output, engineMode);
     }
 
     private List<TestCase> findHighRiskCases() {
@@ -327,6 +325,22 @@ public class TaskExecutor {
             sb.append(items.get(i));
         }
         return sb.toString();
+    }
+
+    /** 检索结果 → 知识快照（快照落库与记录页展示共用结构） */
+    static List<Map<String, Object>> knowledgeOf(RetrievalService.Result result) {
+        List<Map<String, Object>> list = new ArrayList<Map<String, Object>>();
+        if (result == null || result.hits.isEmpty()) {
+            return list;
+        }
+        for (RetrievalService.Hit h : result.hits) {
+            list.add(RetrievalService.toHitMap(h));
+        }
+        return list;
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max - 1) + "…";
     }
 
     private int addStep(List<RunStep> steps, Long runId, int seq, String taskType,

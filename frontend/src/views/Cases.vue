@@ -118,7 +118,7 @@ const toggleAll = () => {
 }
 
 const emptyForm = () => ({
-  title: '', priority: 'P1', type: '功能', status: '使用',
+  title: '', priority: 'P1', type: '功能', status: '使用', version: 'v1',
   preconditions: '', steps: '', expected: '', testData: '', linkedBugNo: ''
 })
 
@@ -133,6 +133,7 @@ const openEdit = (row) => {
   editId.value = row.id
   form.value = {
     title: row.title, priority: row.priority, type: row.type, status: row.status || '使用',
+    version: row.version,
     preconditions: row.preconditions, steps: row.steps, expected: row.expected,
     testData: row.testData, linkedBugNo: row.linkedBugNo
   }
@@ -159,7 +160,7 @@ const save = async () => {
   }
   if (editId.value) {
     const saved = await apiCaseUpdate(editId.value, payload)
-    ElMessage.success(`已保存并升版至 v${saved.version}`)
+    ElMessage.success(`已保存（${saved.version}）`)
   } else {
     await apiCaseCreate(payload)
     ElMessage.success('用例已入库')
@@ -238,7 +239,7 @@ const exportCases = (items) => {
   const data = list.map((c) => ({
     编号: c.caseNo, 标题: c.title, 项目: c.projectName, 模块: c.moduleName,
     子模块: c.submoduleName, 优先级: c.priority, 类型: c.type, 状态: c.status,
-    版本: 'v' + c.version, 关联Bug: c.linkedBugNo, 前置条件: c.preconditions || '',
+    版本: c.version, 关联Bug: c.linkedBugNo, 前置条件: c.preconditions || '',
     测试步骤: c.steps || '', 预期结果: c.expected || '', 测试数据: c.testData || ''
   }))
   const wb = XLSX.utils.book_new()
@@ -513,7 +514,7 @@ onMounted(async () => {
                   <td>{{ stepsCount(c) }}</td>
                   <td><Badge :value="c.status" /></td>
                   <td>{{ fmtDate(c.createdAt) }}</td>
-                  <td>v{{ c.version }}</td>
+                  <td>{{ c.version }}</td>
                 </tr>
                 <tr v-if="!rows.length">
                   <td colspan="10" style="text-align: center; color: #9a9e94; cursor: default">没有匹配的用例</td>
@@ -573,6 +574,10 @@ onMounted(async () => {
           </select>
         </label>
         <label class="field">
+          <span>版本</span>
+          <input v-model="form.version" placeholder="如 v1.0.1">
+        </label>
+        <label class="field">
           <span>关联 Bug</span>
           <input v-model="form.linkedBugNo" placeholder="如 BUG-20260901-001，可留空">
         </label>
@@ -622,7 +627,7 @@ onMounted(async () => {
       </template>
     </TModal>
 
-    <TModal v-if="formVisible" :title="editId ? '编辑用例（保存后升版）' : '新增用例'" :width="640" @close="formVisible = false">
+    <TModal v-if="formVisible" :title="editId ? '编辑用例' : '新增用例'" :width="640" @close="formVisible = false">
       <div class="form-grid">
         <label class="field full">
           <span>用例标题<em>*</em></span>
@@ -660,6 +665,10 @@ onMounted(async () => {
             <option>使用</option>
             <option>废弃</option>
           </select>
+        </label>
+        <label class="field">
+          <span>版本</span>
+          <input v-model="form.version" placeholder="如 v1.0.1">
         </label>
         <label class="field full">
           <span>关联 Bug</span>
@@ -745,7 +754,7 @@ onMounted(async () => {
         <Badge :value="detail.priority" />
         <Badge :value="detail.type" />
         <Badge :value="detail.status" />
-        <span>v{{ detail.version }}</span>
+        <span>{{ detail.version }}</span>
       </div>
       <div class="detail-grid">
         <div><span>用例编号</span><strong>{{ detail.caseNo }}</strong></div>
@@ -774,7 +783,7 @@ onMounted(async () => {
       <div class="drawer-actions">
         <button v-if="detail.status === '废弃'" class="button danger" @click="removeCase">删除用例</button>
         <button class="button" @click="copyCase(detail)">复制用例</button>
-        <button class="button primary" @click="openEdit(detail)">编辑并升版</button>
+        <button class="button primary" @click="openEdit(detail)">编辑用例</button>
       </div>
       <section v-if="audits.length" class="detail-section" style="margin-top: 14px">
         <h3>操作记录</h3>

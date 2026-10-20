@@ -68,6 +68,7 @@ public class RunService {
             m.put("seq", s.getSeq());
             m.put("completeness", s.getCompleteness());
             m.put("missing", JsonUtil.readStringList(s.getMissingJson()));
+            m.put("knowledge", JsonUtil.readList(s.getKnowledgeJson()));
             m.put("output", JsonUtil.readMap(s.getOutputJson()));
             snapshots.add(m);
         }

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Sparkles, ChevronRight, ListChecks, Bug, SquareTerminal, Database, ClipboardCheck, FileBarChart } from 'lucide-vue-next'
+import { ChevronRight, ListChecks, Bug, SquareTerminal, Database, ClipboardCheck, FileBarChart } from 'lucide-vue-next'
 import Badge from '../components/ui/Badge.vue'
 import { apiDashboardStats } from '../api'
 import { fmtDate } from '../utils/format'
@@ -61,7 +61,6 @@ onMounted(async () => {
         <h2>今天从哪里开始？</h2>
         <p>任务、用例、知识与质量结论都在一个工作台内完成。</p>
       </div>
-      <button class="button dark" @click="router.push('/assistant')"><Sparkles />创建智能任务</button>
     </section>
 
     <div class="metric-grid six">

@@ -33,6 +33,15 @@ const routeIcon = (type) => {
 const run = computed(() => detail.value?.run || null)
 const canReview = computed(() => run.value && run.value.reviewStatus === '待复核')
 
+/** 快照知识检索摘要：method 取首条命中（同一次检索方式一致） */
+const knowledgeText = (s) => {
+  const list = s.knowledge || []
+  if (!list.length) return '未检索到相关知识（未虚构）'
+  const label = list[0].method === 'semantic' ? '语义检索' : '关键词检索'
+  const titles = list.map((k) => `${k.title}（v${k.version}）`).join('、')
+  return `${label}命中 ${list.length} 条：${titles}`
+}
+
 const load = async () => {
   const data = await apiRuns(query.value)
   rows.value = data.list || []
@@ -157,7 +166,7 @@ onMounted(load)
             <span class="wb-entry-icon"><component :is="routeIcon(s.taskType)" /></span>
             <div>
               <strong>{{ s.taskName }}</strong>
-              <small>引用范围：暂无知识事实引用 · 完整度 {{ s.completeness }}%</small>
+              <small>{{ knowledgeText(s) }} · 完整度 {{ s.completeness }}%</small>
             </div>
           </header>
           <pre>{{ JSON.stringify(s.output, null, 2) }}</pre>
